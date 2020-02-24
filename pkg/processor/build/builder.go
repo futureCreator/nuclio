@@ -690,13 +690,47 @@ func (b *Builder) validateAndParseS3Attributes(attributes map[string]interface{}
 }
 
 func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
+
+	domain := "https://code.sdsdev.co.kr/"
+	api_url := "https://code.sdsdev.co.kr/api/v3/repos"
+	token := ""
+
+	userDefinedHeaders, found := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["headers"]
+	if found {
+		for key, value := range userDefinedHeaders.(map[string]interface{}) {
+			if key == "Authorization" {
+				stringValue, ok := value.(string);
+				if !ok {
+					return "", errors.New("Invalid Authorization token")
+				}
+				token = strings.Split(stringValue, " ")[1]
+			}
+        }
+        if token == "" {
+            return "", errors.New("If code entry type is github, token must be provided")
+        }
+	} else {
+		return "", errors.New("Empty headers")
+	}
+
 	if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]; ok {
-		functionPath = fmt.Sprintf("%s/archive/%s.zip",
-			strings.TrimRight(functionPath, "/"),
-			branch)
+
+		info := strings.Split(functionPath, domain)[1]
+		owner := strings.Split(info, "/")[0]
+		repo := strings.Split(info, "/")[1]
+
+		functionPath = fmt.Sprintf("%s/%s/%s/zipball/%s?access_token=%s",
+			api_url,
+			owner,
+			repo,
+			branch,
+			token)
 	} else {
 		return "", errors.New("If code entry type is github, branch must be provided")
 	}
+
+	b.logger.DebugWith("GitHub download API", "functionPath", functionPath)
+
 	return functionPath, nil
 }
 
