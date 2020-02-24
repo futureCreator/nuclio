@@ -1314,16 +1314,31 @@ func (lc *lazyClient) populateDeploymentContainer(functionLabels labels.Set,
 	healthCheckHTTPPort := 8082
 
 	container.Image = function.Spec.Image
-	container.Resources = function.Spec.Resources
+    container.Resources = function.Spec.Resources
+    
 	if container.Resources.Requests == nil {
 		container.Resources.Requests = make(v1.ResourceList)
-
-		// the default is 500 milli cpu
-		cpuQuantity, err := apiresource.ParseQuantity("25m") // nolint: errcheck
+		cpuReqQuantity, err := apiresource.ParseQuantity("25m")
 		if err == nil {
-			container.Resources.Requests["cpu"] = cpuQuantity
+			container.Resources.Requests["cpu"] = cpuReqQuantity
+        }
+        memReqQuantity, err := apiresource.ParseQuantity("128Mi")
+		if err == nil {
+			container.Resources.Requests["memory"] = memReqQuantity
+        }
+    }
+    if container.Resources.Limits == nil {
+        container.Resources.Limits = make(v1.ResourceList)
+        cpuLimQuantity, err := apiresource.ParseQuantity("500m")
+		if err == nil {
+			container.Resources.Limits["cpu"] = cpuLimQuantity
+        }
+        memLimQuantity, err := apiresource.ParseQuantity("1Gi")
+		if err == nil {
+			container.Resources.Limits["memory"] = memLimQuantity
 		}
 	}
+    
 	container.Env = lc.getFunctionEnvironment(functionLabels, function)
 	container.Ports = []v1.ContainerPort{
 		{
