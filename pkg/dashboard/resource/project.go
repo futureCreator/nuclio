@@ -27,7 +27,8 @@ import (
 	"github.com/nuclio/nuclio/pkg/restful"
 
 	"github.com/nuclio/errors"
-	"github.com/nuclio/nuclio-sdk-go"
+    "github.com/nuclio/nuclio-sdk-go"
+    apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 type projectResource struct {
@@ -63,6 +64,9 @@ func (pr *projectResource) GetAll(request *http.Request) (map[string]restful.Att
 	})
 
 	if err != nil {
+        if apierrors.IsForbidden(err) {
+			return nil, errors.Wrap(err, "You are not Authorized")
+		}
 		return nil, errors.Wrap(err, "Failed to get projects")
 	}
 
@@ -97,6 +101,9 @@ func (pr *projectResource) GetByID(request *http.Request, id string) (restful.At
 	})
 
 	if err != nil {
+        if apierrors.IsForbidden(err) {
+			return nil, errors.Wrap(err, "You are not Authorized")
+		}
 		return nil, errors.Wrap(err, "Failed to get projects")
 	}
 
@@ -141,8 +148,10 @@ func (pr *projectResource) Create(request *http.Request) (id string, attributes 
 	if err != nil {
 		if strings.Contains(errors.Cause(err).Error(), "already exists") {
 			return "", nil, nuclio.WrapErrConflict(err)
+        }
+        if apierrors.IsForbidden(err) {
+			return "", nil, nuclio.WrapErrForbidden(err)
 		}
-
 		return "", nil, nuclio.WrapErrInternalServerError(err)
 	}
 
@@ -203,7 +212,6 @@ func (pr *projectResource) deleteProject(request *http.Request) (*restful.Custom
 		if errWithStatus, ok := err.(*nuclio.ErrorWithStatusCode); ok {
 			statusCode = errWithStatus.StatusCode()
 		}
-
 		return &restful.CustomRouteFuncResponse{
 			Single:     true,
 			StatusCode: statusCode,
