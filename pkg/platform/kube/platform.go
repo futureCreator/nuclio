@@ -310,10 +310,10 @@ func (p *Platform) CreateProject(createProjectOptions *platform.CreateProjectOpt
     
     client, err := p.consumer.getNuclioClientSet(createProjectOptions.AuthConfig)
     if err != nil {
-		return nil, errors.Wrap(err, "Failed to get Nuclio Client")
+		return errors.Wrap(err, "Failed to get Nuclio Client")
 	}
 
-	_, err := client.NuclioV1beta1().
+	_, err = client.NuclioV1beta1().
 		NuclioProjects(createProjectOptions.ProjectConfig.Meta.Namespace).
 		Create(&newProject)
 
@@ -329,7 +329,7 @@ func (p *Platform) UpdateProject(updateProjectOptions *platform.UpdateProjectOpt
 
     client, err := p.consumer.getNuclioClientSet(updateProjectOptions.AuthConfig)
     if err != nil {
-		return nil, errors.Wrap(err, "Failed to get Nuclio Client")
+		return errors.Wrap(err, "Failed to get Nuclio Client")
 	}
 
 	project, err := client.NuclioV1beta1().
@@ -365,10 +365,10 @@ func (p *Platform) DeleteProject(deleteProjectOptions *platform.DeleteProjectOpt
     
     client, err := p.consumer.getNuclioClientSet(deleteProjectOptions.AuthConfig)
     if err != nil {
-		return nil, errors.Wrap(err, "Failed to get Nuclio Client")
+		return errors.Wrap(err, "Failed to get Nuclio Client")
 	}
 
-	if err := client.nuclioClientSet.NuclioV1beta1().
+	if err := client.NuclioV1beta1().
 		NuclioProjects(deleteProjectOptions.Meta.Namespace).
 		Delete(deleteProjectOptions.Meta.Name, &meta_v1.DeleteOptions{}); err != nil {
 		return errors.Wrapf(err,

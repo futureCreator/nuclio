@@ -130,7 +130,7 @@ func (pr *projectResource) Create(request *http.Request) (id string, attributes 
     
     authConfig, err := pr.getRequestAuthConfig(request)
     if err != nil {
-        return nil, err
+        return "", nil, err
     }
 
 	// create a project
