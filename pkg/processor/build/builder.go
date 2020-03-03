@@ -29,7 +29,8 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
-	"time"
+    "time"
+    "regexp"
 
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/containerimagebuilderpusher"
@@ -700,7 +701,8 @@ func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, err
 		// gitlab
 		// --header 'PRIVATE-TOKEN: abcde...' 'http://gitlab3.sdsdev.co.kr/gitlab/api/v3/projects/{owner}%2F{repository}/repository/archive.zip?sha={branch_reference}
 
-		if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]; !ok {
+        branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+        if !ok {
 			return "", errors.New("If code entry type is gitlab, branch sha must be provided")
 		}
 		functionPath = fmt.Sprintf("%s://%s/%s/api/v3/projects/%s%%2F%s/repository/archive.zip?sha=%s",
@@ -716,10 +718,10 @@ func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, err
 		// github
 		// https://code.sdsdev.co.kr/api/v3/repos/{owner}/{reponame}/zipball/{branch_name}?access_token={token}
 
-		if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+		branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
 		if !ok {
-			branch := "master"
-		}
+			branch = "master"
+        }
 		functionPath = fmt.Sprintf("%s://%s/api/v3/repos/%s/%s/zipball/%s",
 			info[0],
 			info[1],
