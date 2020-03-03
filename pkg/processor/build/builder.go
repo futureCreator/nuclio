@@ -691,42 +691,41 @@ func (b *Builder) validateAndParseS3Attributes(attributes map[string]interface{}
 
 func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
 
-	domain := "https://code.sdsdev.co.kr/"
-	api_url := "https://code.sdsdev.co.kr/api/v3/repos"
-	token := ""
+	gitlabMode := os.Getenv("NUCLIO_GITLAB_MODE") == "true"
+	re := regexp.MustCompile("([\\w:])([\\w\\d-.]+)")
+	info := re.FindAllString(functionPath, -1)
 
-	userDefinedHeaders, found := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["headers"]
-	if found {
-		for key, value := range userDefinedHeaders.(map[string]interface{}) {
-			if key == "Authorization" {
-				stringValue, ok := value.(string);
-				if !ok {
-					return "", errors.New("Invalid Authorization token")
-				}
-				token = strings.Split(stringValue, " ")[1]
-			}
-        }
-        if token == "" {
-            return "", errors.New("If code entry type is github, token must be provided")
-        }
+	if gitlabMode {
+
+		// gitlab
+		// --header 'PRIVATE-TOKEN: abcde...' 'http://gitlab3.sdsdev.co.kr/gitlab/api/v3/projects/{owner}%2F{repository}/repository/archive.zip?sha={branch_reference}
+
+		if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]; !ok {
+			return "", errors.New("If code entry type is gitlab, branch sha must be provided")
+		}
+		functionPath = fmt.Sprintf("%s://%s/%s/api/v3/projects/%s%%2F%s/repository/archive.zip?sha=%s",
+			info[0],
+			info[1],
+			info[2],
+			info[3],
+			info[4],
+			branch)
+
 	} else {
-		return "", errors.New("Empty headers")
-	}
 
-	if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]; ok {
+		// github
+		// https://code.sdsdev.co.kr/api/v3/repos/{owner}/{reponame}/zipball/{branch_name}?access_token={token}
 
-		info := strings.Split(functionPath, domain)[1]
-		owner := strings.Split(info, "/")[0]
-		repo := strings.Split(info, "/")[1]
-
-		functionPath = fmt.Sprintf("%s/%s/%s/zipball/%s?access_token=%s",
-			api_url,
-			owner,
-			repo,
-			branch,
-			token)
-	} else {
-		return "", errors.New("If code entry type is github, branch must be provided")
+		if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+		if !ok {
+			branch := "master"
+		}
+		functionPath = fmt.Sprintf("%s://%s/api/v3/repos/%s/%s/zipball/%s",
+			info[0],
+			info[1],
+			info[2],
+			info[3],
+			branch)
 	}
 
 	b.logger.DebugWith("GitHub download API", "functionPath", functionPath)
@@ -1581,6 +1580,8 @@ func (b *Builder) downloadFunctionFromURL(tempFile *os.File,
 	codeEntryType string) error {
 	userDefinedHeaders, found := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["headers"]
 	headers := http.Header{}
+	gitlabMode := os.Getenv("NUCLIO_GITLAB_MODE") == "true"
+	token := ""
 
 	if found {
 
@@ -1590,7 +1591,22 @@ func (b *Builder) downloadFunctionFromURL(tempFile *os.File,
 			if !ok {
 				return errors.New("Failed to convert header value to string")
 			}
-			headers.Set(key, stringValue)
+			if codeEntryType == GithubEntryType && key == "Authorization" {
+				token = strings.Split(stringValue, " ")[1]
+			} else {
+				headers.Set(key, stringValue)
+			}
+		}
+    }
+
+	if codeEntryType == GithubEntryType {
+        if token == "" {
+            return errors.New("If codeEntryType is GitHub(GitLab), token must be provided")
+        }
+		if gitlabMode {
+			headers.Set("PRIVATE-TOKEN", token)
+		} else {
+			functionPath = functionPath + fmt.Sprintf("?access_token=%s", token)
 		}
 	}
 
