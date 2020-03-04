@@ -71,7 +71,10 @@ func (tr *invocationResource) handleRequest(responseWriter http.ResponseWriter, 
 		tr.writeErrorHeader(responseWriter, http.StatusInternalServerError)
 		responseWriter.Write([]byte(`{"error": "Failed to read request body"}`)) // nolint: errcheck
 		return
-	}
+    }
+    
+    request.Header.Del("cookie")
+	request.Header.Del("Authorization")
 
 	// resolve the function host
 	invocationResult, err := tr.getPlatform().CreateFunctionInvocation(&platform.CreateFunctionInvocationOptions{

@@ -27,7 +27,8 @@ import (
 	"github.com/nuclio/nuclio/pkg/restful"
 
 	"github.com/nuclio/errors"
-	"github.com/nuclio/nuclio-sdk-go"
+    "github.com/nuclio/nuclio-sdk-go"
+    apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 type projectResource struct {
@@ -47,16 +48,25 @@ func (pr *projectResource) GetAll(request *http.Request) (map[string]restful.Att
 	namespace := pr.getNamespaceFromRequest(request)
 	if namespace == "" {
 		return nil, nuclio.NewErrBadRequest("Namespace must exist")
-	}
+    }
+    
+    authConfig, err := pr.getRequestAuthConfig(request)
+    if err != nil {
+        return nil, err
+    }
 
 	projects, err := pr.getPlatform().GetProjects(&platform.GetProjectsOptions{
 		Meta: platform.ProjectMeta{
 			Name:      request.Header.Get("x-nuclio-project-name"),
 			Namespace: pr.getNamespaceFromRequest(request),
-		},
+        },
+        AuthConfig: authConfig,
 	})
 
 	if err != nil {
+        if apierrors.IsForbidden(err) {
+			return nil, errors.Wrap(err, "You are not Authorized")
+		}
 		return nil, errors.Wrap(err, "Failed to get projects")
 	}
 
@@ -75,16 +85,25 @@ func (pr *projectResource) GetByID(request *http.Request, id string) (restful.At
 	namespace := pr.getNamespaceFromRequest(request)
 	if namespace == "" {
 		return nil, nuclio.NewErrBadRequest("Namespace must exist")
-	}
+    }
+    
+    authConfig, err := pr.getRequestAuthConfig(request)
+    if err != nil {
+        return nil, err
+    }
 
 	project, err := pr.getPlatform().GetProjects(&platform.GetProjectsOptions{
 		Meta: platform.ProjectMeta{
 			Name:      id,
-			Namespace: pr.getNamespaceFromRequest(request),
-		},
+            Namespace: pr.getNamespaceFromRequest(request),
+        },
+        AuthConfig: authConfig,
 	})
 
 	if err != nil {
+        if apierrors.IsForbidden(err) {
+			return nil, errors.Wrap(err, "You are not Authorized")
+		}
 		return nil, errors.Wrap(err, "Failed to get projects")
 	}
 
@@ -107,7 +126,12 @@ func (pr *projectResource) Create(request *http.Request) (id string, attributes 
 	projectConfig := platform.ProjectConfig{
 		Meta: *projectInfo.Meta,
 		Spec: *projectInfo.Spec,
-	}
+    }
+    
+    authConfig, err := pr.getRequestAuthConfig(request)
+    if err != nil {
+        return "", nil, err
+    }
 
 	// create a project
 	newProject, err := platform.NewAbstractProject(pr.Logger, pr.getPlatform(), projectConfig)
@@ -117,14 +141,17 @@ func (pr *projectResource) Create(request *http.Request) (id string, attributes 
 
 	// just deploy. the status is async through polling
 	err = pr.getPlatform().CreateProject(&platform.CreateProjectOptions{
-		ProjectConfig: *newProject.GetConfig(),
+        ProjectConfig: *newProject.GetConfig(),
+        AuthConfig:    authConfig,
 	})
 
 	if err != nil {
 		if strings.Contains(errors.Cause(err).Error(), "already exists") {
 			return "", nil, nuclio.WrapErrConflict(err)
+        }
+        if apierrors.IsForbidden(err) {
+			return "", nil, nuclio.WrapErrForbidden(err)
 		}
-
 		return "", nil, nuclio.WrapErrInternalServerError(err)
 	}
 
@@ -164,9 +191,19 @@ func (pr *projectResource) deleteProject(request *http.Request) (*restful.Custom
 			Single:     true,
 			StatusCode: http.StatusBadRequest,
 		}, err
+    }
+    
+    authConfig, err := pr.getRequestAuthConfig(request)
+    if err != nil {
+		return &restful.CustomRouteFuncResponse{
+			Single:     true,
+			StatusCode: http.StatusBadRequest,
+		}, err
+    }
+    
+    deleteProjectOptions := platform.DeleteProjectOptions{
+		AuthConfig: authConfig,
 	}
-
-	deleteProjectOptions := platform.DeleteProjectOptions{}
 	deleteProjectOptions.Meta = *projectInfo.Meta
 
 	err = pr.getPlatform().DeleteProject(&deleteProjectOptions)
@@ -175,7 +212,6 @@ func (pr *projectResource) deleteProject(request *http.Request) (*restful.Custom
 		if errWithStatus, ok := err.(*nuclio.ErrorWithStatusCode); ok {
 			statusCode = errWithStatus.StatusCode()
 		}
-
 		return &restful.CustomRouteFuncResponse{
 			Single:     true,
 			StatusCode: statusCode,
@@ -207,10 +243,19 @@ func (pr *projectResource) updateProject(request *http.Request) (*restful.Custom
 	projectConfig := platform.ProjectConfig{
 		Meta: *projectInfo.Meta,
 		Spec: *projectInfo.Spec,
+    }
+    
+    authConfig, err := pr.getRequestAuthConfig(request)
+    if err != nil {
+		return &restful.CustomRouteFuncResponse{
+			Single:     true,
+			StatusCode: http.StatusBadRequest,
+		}, err
 	}
 
 	err = pr.getPlatform().UpdateProject(&platform.UpdateProjectOptions{
-		ProjectConfig: projectConfig,
+        ProjectConfig: projectConfig,
+        AuthConfig:    authConfig,
 	})
 
 	if err != nil {
@@ -261,7 +306,7 @@ func (pr *projectResource) getProjectInfoFromRequest(request *http.Request, name
 
 	// override namespace if applicable
 	if projectInfoInstance.Meta != nil {
-		projectInfoInstance.Meta.Namespace = pr.getNamespaceOrDefault(projectInfoInstance.Meta.Namespace)
+		projectInfoInstance.Meta.Namespace = pr.getNamespaceOrDefault(request.Header.Get("x-nuclio-project-namespace"))
 	}
 
 	// meta must exist
