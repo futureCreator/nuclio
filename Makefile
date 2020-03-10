@@ -14,6 +14,8 @@ NUCLIO_BUILD_ARGS_VERSION_INFO_FILE = --build-arg NUCLIO_VERSION_INFO_FILE_CONTE
 NUCLIO_DOCKER_LABELS = --label nuclio.version_info="$(NUCLIO_VERSION_INFO)"
 NUCLIO_DOCKER_IMAGE_TAG=$(NUCLIO_LABEL)-$(NUCLIO_ARCH)
 
+PIP_REQUIRE_VIRTUALENV=false
+
 NUCLIO_DOCKER_CONTROLLER_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/nuclio-controller:$(NUCLIO_DOCKER_IMAGE_TAG)
 NUCLIO_DOCKER_PROCESSOR_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/nuclio-processor:$(NUCLIO_DOCKER_IMAGE_TAG)
 NUCLIO_DOCKER_DASHBOARD_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/nuclio-dashboard:$(NUCLIO_DOCKER_IMAGE_TAG)
@@ -87,9 +89,6 @@ dlx: ensure-gopath
 		$(NUCLIO_DOCKER_LABELS) .
 
 handler-builder-python-onbuild:
-
-	# `--exists-action i` means to ignore and skip download if whl already exists
-	pip download -d pkg/processor/runtime/python/py/whl --exists-action i -r pkg/processor/runtime/python/py/requirements.txt
 	docker build --build-arg NUCLIO_ARCH=$(NUCLIO_ARCH) --build-arg NUCLIO_LABEL=$(NUCLIO_LABEL) \
 		--file pkg/processor/build/runtime/python/docker/onbuild/Dockerfile \
 		--tag $(NUCLIO_DOCKER_HANDLER_BUILDER_PYTHON_ONBUILD_IMAGE_NAME) .
