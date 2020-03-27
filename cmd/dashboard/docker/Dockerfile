@@ -44,6 +44,7 @@ RUN go get github.com/v3io/v3io-go-http \
     && go get github.com/nuclio/logger \
     && go get github.com/nuclio/nuclio-sdk-go \
     && go get github.com/nuclio/amqp \
+    && go get golang.org/x/net/... \
     && go get github.com/v3io/scaler-types \
     && cd $GOPATH/src/github.com/v3io/scaler-types \
     && git checkout v1.5.0 \
@@ -60,16 +61,19 @@ ARG DOCKER_CLI_VERSION="18.09.6"
 
 ENV DOWNLOAD_URL="https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_CLI_VERSION.tgz"
 
-RUN apk --update --no-cache add ca-certificates git curl supervisor \
+RUN apk --update --no-cache add ca-certificates git curl parallel \
     && mkdir -p /tmp/download \
     && curl -L $DOWNLOAD_URL | tar -xz -C /tmp/download \
     && mv /tmp/download/docker/docker /usr/local/bin/ \
     && rm -rf /tmp/download \
     && apk del curl
 
-# copy supervisord configuration files
-COPY cmd/dashboard/docker/supervisor.conf /etc/supervisor.conf
-COPY cmd/dashboard/docker/dashboard.sv.conf /etc/supervisor/conf.d/dashboard.conf
+# copy runners
+COPY cmd/dashboard/docker/runners /runners
+COPY cmd/dashboard/docker/runner.sh /runner.sh
+
+# make them executable
+RUN chmod +x /runners/*.sh /runner.sh
 
 # copy nginx config
 COPY cmd/dashboard/docker/nginx.conf /etc/nginx/conf.d/default.conf
@@ -87,4 +91,4 @@ COPY cmd/dashboard/docker/.dockerconfigjson /etc/nuclio/dashboard/registry-crede
 ARG NUCLIO_VERSION_INFO_FILE_CONTENTS
 RUN mkdir -p /etc/nuclio && echo ${NUCLIO_VERSION_INFO_FILE_CONTENTS} > /etc/nuclio/version_info.json
 
-CMD ["supervisord", "-c", "/etc/supervisor.conf", "-l", "/etc/supervisor.log", "-j", "/etc/supervisor.pid"]
+CMD ["sh",  "-c", "./runner.sh"]

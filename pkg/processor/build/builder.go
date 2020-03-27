@@ -52,6 +52,7 @@ import (
 
 	"github.com/nuclio/errors"
 	"github.com/nuclio/logger"
+	"github.com/nuclio/nuclio-sdk-go"
 	"gopkg.in/yaml.v2"
 )
 
@@ -794,10 +795,14 @@ func (b *Builder) resolveUserSpecifiedArchiveWorkdir(decompressDir string) (stri
 	if found {
 		userSpecifiedWorkDirectory, ok := userSpecifiedWorkDirectoryInterface.(string)
 		if !ok {
-			return "", errors.New("workDir is expected to be string")
+			return "", nuclio.NewErrBadRequest(string(common.WorkDirectoryExpectedBeString))
 		}
 		decompressDir = filepath.Join(decompressDir, userSpecifiedWorkDirectory)
+		if !common.FileExists(decompressDir) {
+			return "", nuclio.NewErrBadRequest(string(common.WorkDirectoryDoesNotExist))
+		}
 	}
+
 	return decompressDir, nil
 }
 
@@ -1022,29 +1027,21 @@ func (b *Builder) buildProcessorImage() (string, error) {
 		return "", errors.Wrap(err, "Failed to get build args")
 	}
 
-	// Use dedicated base images registry (pull registry) if defined
-	// If base registry is not defined will use the following:
-	//     - for docker builder: quay.io
-	//     - for kaniko builder: push registry
-	registry := b.options.FunctionConfig.Spec.Build.BaseImageRegistry
-	if len(registry) == 0 {
-		registry = b.platform.GetBaseImageRegistry(b.options.FunctionConfig.Spec.Build.Registry)
+	// Use dedicated base and onbuild image registries (pull registry) if defined
+	// - An empty baseImageRegistry will result in base images being pulled from the web, each base image according
+	// to it's fully qualified image name (different for each runtime)
+	// - An empty onbuildImageRegistry will result in onbuild images looked for in quay.io
+	baseImageRegistry := b.options.FunctionConfig.Spec.Build.BaseImageRegistry
+	if baseImageRegistry == "" {
+		baseImageRegistry = b.platform.GetBaseImageRegistry(b.options.FunctionConfig.Spec.Build.Registry)
 	}
 
-	var BuildTimeoutSeconds int64
-	if b.options.FunctionConfig.Spec.Build.BuildTimeoutSeconds != nil {
-		if *b.options.FunctionConfig.Spec.Build.BuildTimeoutSeconds > 0 {
-			BuildTimeoutSeconds = *b.options.FunctionConfig.Spec.Build.BuildTimeoutSeconds
-		} else {
-
-			// no timeout
-			BuildTimeoutSeconds = math.MaxInt64 - time.Now().UnixNano()
-		}
-	} else {
-		BuildTimeoutSeconds = 3600 // sec
+	onbuildImageRegistry := b.options.FunctionConfig.Spec.Build.BaseImageRegistry
+	if onbuildImageRegistry == "" {
+		onbuildImageRegistry = b.platform.GetOnbuildImageRegistry(b.options.FunctionConfig.Spec.Build.Registry)
 	}
 
-	processorDockerfileInfo, err := b.createProcessorDockerfile(registry)
+	processorDockerfileInfo, err := b.createProcessorDockerfile(baseImageRegistry, onbuildImageRegistry)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to create processor dockerfile")
 	}
@@ -1064,22 +1061,26 @@ func (b *Builder) buildProcessorImage() (string, error) {
 		RegistryURL:         b.options.FunctionConfig.Spec.Build.Registry,
 		SecretName:          b.options.FunctionConfig.Spec.ImagePullSecrets,
 		OutputImageFile:     b.options.OutputImageFile,
-		BuildTimeoutSeconds: BuildTimeoutSeconds,
+		BuildTimeoutSeconds: b.resolveBuildTimeoutSeconds(),
 	})
 
 	return imageName, err
 }
 
-func (b *Builder) createProcessorDockerfile(registryURL string) (*runtime.ProcessorDockerfileInfo, error) {
+func (b *Builder) createProcessorDockerfile(baseImageRegistry string, onbuildImageRegistry string) (
+	*runtime.ProcessorDockerfileInfo, error) {
 
 	// get the contents of the processor dockerfile from the runtime
-	processorDockerfileInfo, err := b.getRuntimeProcessorDockerfileInfo(registryURL)
+	processorDockerfileInfo, err := b.getRuntimeProcessorDockerfileInfo(baseImageRegistry, onbuildImageRegistry)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get Dockerfile contents")
 	}
 
 	// log the resulting dockerfile
-	b.logger.DebugWith("Created processor Dockerfile", "dockerfileInfo", processorDockerfileInfo.DockerfileContents)
+	b.logger.DebugWith("Created processor Dockerfile",
+		"dockerfileInfo", processorDockerfileInfo.DockerfileContents,
+		"baseImageRegistry", baseImageRegistry,
+		"onbuildImageRegistry", onbuildImageRegistry)
 
 	// write the contents to the path
 	if err := ioutil.WriteFile(processorDockerfileInfo.DockerfilePath,
@@ -1198,10 +1199,11 @@ func (b *Builder) getHandlerDir(stagingDir string) string {
 	return path.Join(stagingDir, "handler")
 }
 
-func (b *Builder) getRuntimeProcessorDockerfileInfo(registryURL string) (*runtime.ProcessorDockerfileInfo, error) {
+func (b *Builder) getRuntimeProcessorDockerfileInfo(baseImageRegistry string, onbuildImageRegistry string) (
+	*runtime.ProcessorDockerfileInfo, error) {
 
 	// gather the processor dockerfile info
-	processorDockerfileInfo, err := b.getProcessorDockerfileInfo(registryURL)
+	processorDockerfileInfo, err := b.resolveProcessorDockerfileInfo(baseImageRegistry, onbuildImageRegistry)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get processor Dockerfile info")
 	}
@@ -1238,14 +1240,16 @@ func (b *Builder) getRuntimeProcessorDockerfileInfo(registryURL string) (*runtim
 	return processorDockerfileInfo, nil
 }
 
-func (b *Builder) getProcessorDockerfileInfo(registryURL string) (*runtime.ProcessorDockerfileInfo, error) {
+func (b *Builder) resolveProcessorDockerfileInfo(baseImageRegistry string,
+	onbuildImageRegistry string) (*runtime.ProcessorDockerfileInfo, error) {
 	versionInfo, err := version.Get()
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get version info")
 	}
 
 	// get defaults from the runtime
-	runtimeProcessorDockerfileInfo, err := b.runtime.GetProcessorDockerfileInfo(versionInfo, registryURL)
+	runtimeProcessorDockerfileInfo, err := b.runtime.GetProcessorDockerfileInfo(versionInfo,
+		onbuildImageRegistry)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get processor Dockerfile info")
 	}
@@ -1257,7 +1261,8 @@ func (b *Builder) getProcessorDockerfileInfo(registryURL string) (*runtime.Proce
 	}
 
 	// set the base image
-	processorDockerfileInfo.BaseImage = b.getProcessorDockerfileBaseImage(runtimeProcessorDockerfileInfo.BaseImage)
+	processorDockerfileInfo.BaseImage = b.getProcessorDockerfileBaseImage(runtimeProcessorDockerfileInfo.BaseImage,
+		baseImageRegistry)
 	processorDockerfileInfo.BaseImage, err = b.renderDependantImageURL(processorDockerfileInfo.BaseImage,
 		b.options.DependantImagesRegistryURL)
 	if err != nil {
@@ -1297,16 +1302,26 @@ func (b *Builder) getProcessorDockerfileInfo(registryURL string) (*runtime.Proce
 	return &processorDockerfileInfo, nil
 }
 
-func (b *Builder) getProcessorDockerfileBaseImage(runtimeDefaultBaseImage string) string {
+func (b *Builder) getProcessorDockerfileBaseImage(runtimeDefaultBaseImage string, baseImageRegistry string) string {
 
 	// override base image, if required
 	switch b.options.FunctionConfig.Spec.Build.BaseImage {
 
 	// if user didn't pass anything, use default as specified in Dockerfile
 	case "":
-		return runtimeDefaultBaseImage
+		if baseImageRegistry == "" {
+			return runtimeDefaultBaseImage
+		}
 
-	// if user specified something - use that
+		// if a non empty baseImageRegistry was passed, use it as a registry prefix for the default base image
+		sepIndex := strings.Index(runtimeDefaultBaseImage, "/")
+		if sepIndex != -1 {
+			runtimeDefaultBaseImage = runtimeDefaultBaseImage[sepIndex+1:]
+		}
+		return strings.Join([]string{baseImageRegistry, runtimeDefaultBaseImage}, "/")
+
+	// if user specified something - use that, as is
+	// see description on https://github.com/nuclio/nuclio/pull/1544 - we don't implicitly mutate the given baseimage
 	default:
 		return b.options.FunctionConfig.Spec.Build.BaseImage
 	}
@@ -1655,4 +1670,18 @@ func (b *Builder) getFunctionTempFile(tempDir string, functionPath string, isArc
 
 	// for non-archives, must retain file name
 	return os.OpenFile(path.Join(tempDir, functionPathBase), os.O_RDWR|os.O_CREATE, 0600)
+}
+
+func (b *Builder) resolveBuildTimeoutSeconds() int64 {
+	if b.options.FunctionConfig.Spec.Build.BuildTimeoutSeconds != nil {
+		if *b.options.FunctionConfig.Spec.Build.BuildTimeoutSeconds > 0 {
+			return *b.options.FunctionConfig.Spec.Build.BuildTimeoutSeconds
+		}
+
+		// no timeout
+		return math.MaxInt64 - time.Now().UnixNano()
+	}
+
+	// default timeout in seconds
+	return 60 * 60
 }

@@ -40,7 +40,7 @@ import (
 	"github.com/nuclio/errors"
 	"github.com/nuclio/logger"
 	"golang.org/x/sync/errgroup"
-	apps_v1beta1 "k8s.io/api/apps/v1beta1"
+	apps_v1 "k8s.io/api/apps/v1"
 	autos_v2 "k8s.io/api/autoscaling/v2beta1"
 	"k8s.io/api/core/v1"
 	ext_v1beta1 "k8s.io/api/extensions/v1beta1"
@@ -48,17 +48,17 @@ import (
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 )
 
 const (
-	containerHTTPPort       = 8080
-	containerHTTPPortName   = "http"
-	containerMetricPort     = 8090
-	containerMetricPortName = "metrics"
-	nvidiaGpuResourceName   = "nvidia.com/gpu"
+	containerHTTPPort             = 8080
+	containerHTTPPortName         = "http"
+	containerMetricPort           = 8090
+	containerMetricPortName       = "metrics"
+	nvidiaGpuResourceName         = "nvidia.com/gpu"
+	nginxIngressUpdateGracePeriod = 5 * time.Second
 )
 
 type deploymentResourceMethod string
@@ -101,7 +101,7 @@ func (lc *lazyClient) List(ctx context.Context, namespace string) ([]Resources, 
 		LabelSelector: "nuclio.io/class=function",
 	}
 
-	result, err := lc.kubeClientSet.AppsV1beta1().Deployments(namespace).List(listOptions)
+	result, err := lc.kubeClientSet.AppsV1().Deployments(namespace).List(listOptions)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to list deployments")
 	}
@@ -123,9 +123,9 @@ func (lc *lazyClient) List(ctx context.Context, namespace string) ([]Resources, 
 }
 
 func (lc *lazyClient) Get(ctx context.Context, namespace string, name string) (Resources, error) {
-	var result *apps_v1beta1.Deployment
+	var result *apps_v1.Deployment
 
-	result, err := lc.kubeClientSet.AppsV1beta1().Deployments(namespace).Get(name, meta_v1.GetOptions{})
+	result, err := lc.kubeClientSet.AppsV1().Deployments(namespace).Get(name, meta_v1.GetOptions{})
 	lc.logger.DebugWith("Got deployment",
 		"namespace", namespace,
 		"name", name,
@@ -247,7 +247,7 @@ func (lc *lazyClient) WaitAvailable(ctx context.Context, namespace string, name 
 		}
 
 		// get the deployment. if it doesn't exist yet, retry a bit later
-		result, err := lc.kubeClientSet.AppsV1beta1().Deployments(namespace).Get(name, meta_v1.GetOptions{})
+		result, err := lc.kubeClientSet.AppsV1().Deployments(namespace).Get(name, meta_v1.GetOptions{})
 		if err != nil {
 			continue
 		}
@@ -257,7 +257,7 @@ func (lc *lazyClient) WaitAvailable(ctx context.Context, namespace string, name 
 
 			// when we find the right condition, check its Status to see if it's true.
 			// a DeploymentCondition whose Type == Available and Status == True means the deployment is available
-			if deploymentCondition.Type == apps_v1beta1.DeploymentAvailable {
+			if deploymentCondition.Type == apps_v1.DeploymentAvailable {
 				available := deploymentCondition.Status == v1.ConditionTrue
 
 				if available && result.Status.UnavailableReplicas == 0 {
@@ -313,7 +313,7 @@ func (lc *lazyClient) Delete(ctx context.Context, namespace string, name string)
 	}
 
 	// Delete Deployment if exists
-	err = lc.kubeClientSet.AppsV1beta1().Deployments(namespace).Delete(name, deleteOptions)
+	err = lc.kubeClientSet.AppsV1().Deployments(namespace).Delete(name, deleteOptions)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return errors.Wrap(err, "Failed to delete deployment")
@@ -357,59 +357,74 @@ func (lc *lazyClient) createOrUpdateResource(resourceName string,
 	var resource interface{}
 	var err error
 
-	deadline := time.Now().Add(1 * time.Minute)
+	updateDeadline := time.Now().Add(2 * time.Minute)
 
-	// get the resource until it's not deleting
 	for {
+		waitingForDeletionDeadline := time.Now().Add(1 * time.Minute)
 
-		// get resource will return the resource
-		resource, err = getResource()
+		// get the resource until it's not deleting
+		for {
 
-		// if the resource is deleting, wait for it to complete deleting
-		if err == nil && resourceIsDeleting(resource) {
-			lc.logger.DebugWith("Resource is deleting, waiting", "name", resourceName)
+			// get resource will return the resource
+			resource, err = getResource()
 
-			// we need to wait a bit and try again
-			time.Sleep(1 * time.Second)
+			// if the resource is deleting, wait for it to complete deleting
+			if err == nil && resourceIsDeleting(resource) {
+				lc.logger.DebugWith("Resource is deleting, waiting", "name", resourceName)
 
-			// if we passed the deadline
-			if time.Now().After(deadline) {
-				return nil, errors.New("Timed out waiting for service to delete")
+				// we need to wait a bit and try again
+				time.Sleep(1 * time.Second)
+
+				// if we passed the deadline
+				if time.Now().After(waitingForDeletionDeadline) {
+					return nil, errors.New("Timed out waiting for service to delete")
+				}
+
+			} else {
+
+				// there was either an error or the resource exists and is not being deleted
+				break
+			}
+		}
+
+		// if there's an error
+		if err != nil {
+
+			// if there was an error and it wasn't not found - there was an error. bail
+			if !apierrors.IsNotFound(err) {
+				return nil, errors.Wrapf(err, "Failed to get resource")
 			}
 
-		} else {
+			// create the resource
+			resource, err = createResource()
 
-			// there was either an error or the resource exists and is not being deleted
-			break
-		}
-	}
+			if err != nil {
+				return nil, errors.Wrap(err, "Failed to create resource")
+			}
 
-	// if there's an error
-	if err != nil {
-
-		// if there was an error and it wasn't not found - there was an error. bail
-		if !apierrors.IsNotFound(err) {
-			return nil, errors.Wrapf(err, "Failed to get resource")
+			return resource, nil
 		}
 
-		// create the resource
-		resource, err = createResource()
-
+		resource, err = updateResource(resource)
 		if err != nil {
-			return nil, errors.Wrap(err, "Failed to create resource")
+
+			// if there was an error and it wasn't conflict - there was an error. Bail
+			if !apierrors.IsConflict(err) {
+				return nil, errors.Wrapf(err, "Failed to update resource")
+			}
+
+			// if we passed the deadline
+			if time.Now().After(updateDeadline) {
+				return nil, errors.Errorf("Timed out updating resource: %s", resourceName)
+			}
+
+			lc.logger.DebugWith("Got conflict while trying to update resource. Retrying", "name", resourceName)
+			continue
 		}
 
+		lc.logger.DebugWith("Resource updated", "name", resourceName)
 		return resource, nil
 	}
-
-	resource, err = updateResource(resource)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to update resource")
-	}
-
-	lc.logger.DebugWith("Resource updated", "name", resourceName)
-
-	return resource, nil
 }
 
 func (lc *lazyClient) createOrUpdateConfigMap(function *nuclioio.NuclioFunction) (*v1.ConfigMap, error) {
@@ -506,7 +521,7 @@ func (lc *lazyClient) createOrUpdateService(functionLabels labels.Set,
 
 func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 	imagePullSecrets string,
-	function *nuclioio.NuclioFunction) (*apps_v1beta1.Deployment, error) {
+	function *nuclioio.NuclioFunction) (*apps_v1.Deployment, error) {
 
 	// to make sure the pod re-pulls the image, we need to specify a unique string here
 	podAnnotations, err := lc.getPodAnnotations(function)
@@ -529,11 +544,11 @@ func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 	volumes, volumeMounts := lc.getFunctionVolumeAndMounts(function)
 
 	getDeployment := func() (interface{}, error) {
-		return lc.kubeClientSet.AppsV1beta1().Deployments(function.Namespace).Get(function.Name, meta_v1.GetOptions{})
+		return lc.kubeClientSet.AppsV1().Deployments(function.Namespace).Get(function.Name, meta_v1.GetOptions{})
 	}
 
 	deploymentIsDeleting := func(resource interface{}) bool {
-		return (resource).(*apps_v1beta1.Deployment).ObjectMeta.DeletionTimestamp != nil
+		return (resource).(*apps_v1.Deployment).ObjectMeta.DeletionTimestamp != nil
 	}
 
 	if function.Spec.ImagePullSecrets != "" {
@@ -546,7 +561,10 @@ func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 		lc.populateDeploymentContainer(functionLabels, function, &container)
 		container.VolumeMounts = volumeMounts
 
-		deploymentSpec := apps_v1beta1.DeploymentSpec{
+		deploymentSpec := apps_v1.DeploymentSpec{
+			Selector: &meta_v1.LabelSelector{
+				MatchLabels: functionLabels,
+			},
 			Replicas: replicas,
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: meta_v1.ObjectMeta{
@@ -568,7 +586,7 @@ func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 			},
 		}
 
-		deployment := &apps_v1beta1.Deployment{
+		deployment := &apps_v1.Deployment{
 			ObjectMeta: meta_v1.ObjectMeta{
 				Name:        function.Name,
 				Namespace:   function.Namespace,
@@ -582,11 +600,11 @@ func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 		if err := lc.enrichDeploymentFromPlatformConfiguration(function, deployment, method); err != nil {
 			return nil, err
 		}
-		return lc.kubeClientSet.AppsV1beta1().Deployments(function.Namespace).Create(deployment)
+		return lc.kubeClientSet.AppsV1().Deployments(function.Namespace).Create(deployment)
 	}
 
 	updateDeployment := func(resource interface{}) (interface{}, error) {
-		deployment := resource.(*apps_v1beta1.Deployment)
+		deployment := resource.(*apps_v1.Deployment)
 		method := updateDeploymentResourceMethod
 
 		// If we got nil replicas it means leave as is (in order to prevent unwanted scale down)
@@ -602,6 +620,13 @@ func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 				replicas = &maxReplicas
 			} else if deployment.Status.Replicas < minReplicas {
 				replicas = &minReplicas
+			} else {
+
+				// if we're within the valid range - and want to leave as is (since replicas == nil) - use current value
+				// NOTE: since we're using the existing deployment (given by our get function) ResourceVersion is set
+				// meaning the update will fail with conflict if something has changed in the meanwhile (e.g. HPA
+				// changed the replicas count) - retry is handled by the createOrUpdateResource wrapper
+				replicas = &deployment.Status.Replicas
 			}
 		}
 
@@ -618,25 +643,11 @@ func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 
 		// enrich deployment spec with default fields that were passed inside the platform configuration
 		// performed on update too, in case the platform config has been modified after the creation of this deployment
-		// enrich deployment spec with default fields that were passed inside the platform configuration
 		if err := lc.enrichDeploymentFromPlatformConfiguration(function, deployment, method); err != nil {
 			return nil, err
 		}
 
-		body, err := json.Marshal(deployment)
-		if err != nil {
-			return "", errors.Wrap(err, "Failed to marshal deployment resource")
-		}
-
-		deployment, err = lc.kubeClientSet.AppsV1beta1().Deployments(function.Namespace).Patch(deployment.Name,
-			types.MergePatchType,
-			body)
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to patch the updated deployment")
-		}
-
-		// we must call it after, as marshal will omit the deployment's rollingUpdate field change to nil (omitempty)
-		return lc.updateDeploymentStrategy(deployment, function)
+		return lc.kubeClientSet.AppsV1().Deployments(function.Namespace).Update(deployment)
 	}
 
 	resource, err := lc.createOrUpdateResource("deployment",
@@ -649,24 +660,10 @@ func (lc *lazyClient) createOrUpdateDeployment(functionLabels labels.Set,
 		return nil, err
 	}
 
-	return resource.(*apps_v1beta1.Deployment), err
+	return resource.(*apps_v1.Deployment), err
 }
 
-func (lc *lazyClient) canUpdateDeploymentStrategy(deployment *apps_v1beta1.Deployment,
-	function *nuclioio.NuclioFunction,
-	deploymentAugmentedConfigs []platformconfig.LabelSelectorAndConfig) (bool, error) {
-
-	// check if user didnt provide a deployment strategy
-	for _, augmentedConfig := range deploymentAugmentedConfigs {
-		if augmentedConfig.Kubernetes.Deployment.Spec.Strategy.Type != "" ||
-			augmentedConfig.Kubernetes.Deployment.Spec.Strategy.RollingUpdate != nil {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func (lc *lazyClient) resolveDefaultDeploymentStrategy(function *nuclioio.NuclioFunction) apps_v1beta1.DeploymentStrategyType {
+func (lc *lazyClient) resolveDeploymentStrategy(function *nuclioio.NuclioFunction) apps_v1.DeploymentStrategyType {
 
 	// Since k8s (ATM) does not support rolling update for GPU
 	// redeploying a Nuclio function will get stuck if no GPU is available
@@ -676,68 +673,17 @@ func (lc *lazyClient) resolveDefaultDeploymentStrategy(function *nuclioio.Nuclio
 
 		// requested a gpu resource, change to recreate
 		if !gpuResource.IsZero() {
-			return apps_v1beta1.RecreateDeploymentStrategyType
+			return apps_v1.RecreateDeploymentStrategyType
 		}
 	}
 
 	// no gpu resources requested, set to rollingUpdate (default)
-	return apps_v1beta1.RollingUpdateDeploymentStrategyType
-}
-
-func (lc *lazyClient) updateDeploymentStrategy(deployment *apps_v1beta1.Deployment, function *nuclioio.NuclioFunction) (*apps_v1beta1.Deployment, error) {
-	var jsonPatchMapper []map[string]string
-
-	deploymentAugmentedConfigs, err := lc.getDeploymentAugmentedConfigs(function)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get deployment augmented configs")
-	}
-
-	// check user didn't provide any deployment strategy specifics
-	canUpdateDeploymentStrategy, err := lc.canUpdateDeploymentStrategy(deployment, function, deploymentAugmentedConfigs)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to decide if deployment strategy can be updated")
-	}
-	if !canUpdateDeploymentStrategy {
-		return deployment, nil
-	}
-
-	newDeploymentStrategyType := lc.resolveDefaultDeploymentStrategy(function)
-	if newDeploymentStrategyType == deployment.Spec.Strategy.Type {
-
-		// nothing has changed
-		return deployment, nil
-	}
-
-	jsonPatchMapper = append(jsonPatchMapper, map[string]string{
-		"op":    "replace",
-		"path":  "/spec/strategy/type",
-		"value": string(newDeploymentStrategyType),
-	})
-
-	// if current strategy is rolling update, in order to change it to `Recreate`
-	// we must remove `rollingUpdate` field
-	if deployment.Spec.Strategy.Type == apps_v1beta1.RollingUpdateDeploymentStrategyType &&
-		newDeploymentStrategyType == apps_v1beta1.RecreateDeploymentStrategyType {
-		jsonPatchMapper = append(jsonPatchMapper, map[string]string{
-			"op":   "remove",
-			"path": "/spec/strategy/rollingUpdate",
-		})
-	}
-
-	deploymentBody, err := json.Marshal(jsonPatchMapper)
-	if err != nil {
-		return nil, errors.Wrap(err, "Could not marshal json patch mapper")
-	}
-
-	lc.logger.DebugWith("Patching deployment strategy", "deploymentBody", string(deploymentBody))
-	return lc.kubeClientSet.AppsV1beta1().Deployments(function.Namespace).Patch(deployment.Name,
-		types.JSONPatchType,
-		deploymentBody)
+	return apps_v1.RollingUpdateDeploymentStrategyType
 }
 
 func (lc *lazyClient) enrichDeploymentFromPlatformConfiguration(function *nuclioio.NuclioFunction,
-	deployment *apps_v1beta1.Deployment, method deploymentResourceMethod) error {
-	var allowSetDefaultDeploymentStrategy = true
+	deployment *apps_v1.Deployment, method deploymentResourceMethod) error {
+	var allowSetDeploymentStrategy = true
 
 	// get deployment augmented configurations
 	deploymentAugmentedConfigs, err := lc.getDeploymentAugmentedConfigs(function)
@@ -747,12 +693,14 @@ func (lc *lazyClient) enrichDeploymentFromPlatformConfiguration(function *nuclio
 
 	// merge
 	for _, augmentedConfig := range deploymentAugmentedConfigs {
-		if augmentedConfig.Kubernetes.Deployment.Spec.Strategy.Type != "" ||
-			augmentedConfig.Kubernetes.Deployment.Spec.Strategy.RollingUpdate != nil {
-			allowSetDefaultDeploymentStrategy = false
-		}
-		if err := mergo.Merge(&deployment.Spec, &augmentedConfig.Kubernetes.Deployment.Spec); err != nil {
-			return errors.Wrap(err, "Failed to merge deployment spec")
+		if augmentedConfig.Kubernetes.Deployment != nil {
+			if augmentedConfig.Kubernetes.Deployment.Spec.Strategy.Type != "" ||
+				augmentedConfig.Kubernetes.Deployment.Spec.Strategy.RollingUpdate != nil {
+				allowSetDeploymentStrategy = false
+			}
+			if err := mergo.Merge(&deployment.Spec, &augmentedConfig.Kubernetes.Deployment.Spec); err != nil {
+				return errors.Wrap(err, "Failed to merge deployment spec")
+			}
 		}
 	}
 
@@ -760,8 +708,22 @@ func (lc *lazyClient) enrichDeploymentFromPlatformConfiguration(function *nuclio
 
 	// on create, change inplace the deployment strategy
 	case createDeploymentResourceMethod:
-		if allowSetDefaultDeploymentStrategy {
-			deployment.Spec.Strategy.Type = lc.resolveDefaultDeploymentStrategy(function)
+		if allowSetDeploymentStrategy {
+			deployment.Spec.Strategy.Type = lc.resolveDeploymentStrategy(function)
+		}
+	case updateDeploymentResourceMethod:
+		if allowSetDeploymentStrategy {
+			newDeploymentStrategyType := lc.resolveDeploymentStrategy(function)
+			if newDeploymentStrategyType != deployment.Spec.Strategy.Type {
+
+				// if current strategy is rolling update, in order to change it to `Recreate`
+				// we must remove `rollingUpdate` field
+				if deployment.Spec.Strategy.Type == apps_v1.RollingUpdateDeploymentStrategyType &&
+					newDeploymentStrategyType == apps_v1.RecreateDeploymentStrategyType {
+					deployment.Spec.Strategy.RollingUpdate = nil
+				}
+				deployment.Spec.Strategy.Type = newDeploymentStrategyType
+			}
 		}
 	}
 	return nil
@@ -845,7 +807,7 @@ func (lc *lazyClient) createOrUpdateHorizontalPodAutoscaler(functionLabels label
 				MaxReplicas: maxReplicas,
 				Metrics:     metricSpecs,
 				ScaleTargetRef: autos_v2.CrossVersionObjectReference{
-					APIVersion: "apps/apps_v1beta1",
+					APIVersion: "apps/apps_v1",
 					Kind:       "Deployment",
 					Name:       function.Name,
 				},
@@ -927,10 +889,15 @@ func (lc *lazyClient) createOrUpdateIngress(functionLabels labels.Set,
 			return nil, nil
 		}
 
-		return lc.kubeClientSet.ExtensionsV1beta1().Ingresses(function.Namespace).Create(&ext_v1beta1.Ingress{
+		resultIngress, err := lc.kubeClientSet.ExtensionsV1beta1().Ingresses(function.Namespace).Create(&ext_v1beta1.Ingress{
 			ObjectMeta: ingressMeta,
 			Spec:       ingressSpec,
 		})
+		if err != nil {
+			lc.waitForNginxIngressToStabilize()
+		}
+
+		return resultIngress, err
 	}
 
 	updateIngress := func(resource interface{}) (interface{}, error) {
@@ -961,7 +928,12 @@ func (lc *lazyClient) createOrUpdateIngress(functionLabels labels.Set,
 			return nil, nil
 		}
 
-		return lc.kubeClientSet.ExtensionsV1beta1().Ingresses(function.Namespace).Update(ingress)
+		resultIngress, err := lc.kubeClientSet.ExtensionsV1beta1().Ingresses(function.Namespace).Update(ingress)
+		if err != nil {
+			lc.waitForNginxIngressToStabilize()
+		}
+
+		return resultIngress, err
 	}
 
 	resource, err := lc.createOrUpdateResource("ingress",
@@ -979,6 +951,13 @@ func (lc *lazyClient) createOrUpdateIngress(functionLabels labels.Set,
 	}
 
 	return resource.(*ext_v1beta1.Ingress), err
+}
+
+// nginx ingress controller might need a grace period to stabilize after an update, otherwise it might respond with 503
+func (lc *lazyClient) waitForNginxIngressToStabilize() {
+	lc.logger.DebugWith("Waiting for nginx ingress to stabilize", "nginxIngressUpdateGracePeriod", nginxIngressUpdateGracePeriod)
+	time.Sleep(nginxIngressUpdateGracePeriod)
+	lc.logger.Debug("Finished waiting for nginx ingress to stabilize")
 }
 
 func (lc *lazyClient) initClassLabels() {
@@ -1619,7 +1598,7 @@ func (lc *lazyClient) getMetricResourceByName(resourceName string) v1.ResourceNa
 
 type lazyResources struct {
 	logger                  logger.Logger
-	deployment              *apps_v1beta1.Deployment
+	deployment              *apps_v1.Deployment
 	configMap               *v1.ConfigMap
 	service                 *v1.Service
 	horizontalPodAutoscaler *autos_v2.HorizontalPodAutoscaler
@@ -1627,7 +1606,7 @@ type lazyResources struct {
 }
 
 // Deployment returns the deployment
-func (lr *lazyResources) Deployment() (*apps_v1beta1.Deployment, error) {
+func (lr *lazyResources) Deployment() (*apps_v1.Deployment, error) {
 	return lr.deployment, nil
 }
 
