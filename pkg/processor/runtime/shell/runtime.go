@@ -21,7 +21,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
+    "os/exec"
+    "math"
 	"path"
 	"strings"
 	"time"
@@ -34,6 +35,10 @@ import (
 	"github.com/nuclio/errors"
 	"github.com/nuclio/logger"
 	"github.com/nuclio/nuclio-sdk-go"
+)
+
+const (
+    minimumDurationMilliSeconds float64 = 100.0
 )
 
 type shell struct {
@@ -98,7 +103,10 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
 	cmd.Env = s.env
 
 	// add event stuff to env
-	cmd.Env = append(cmd.Env, s.getEnvFromEvent(event)...)
+    cmd.Env = append(cmd.Env, s.getEnvFromEvent(event)...)
+    
+    // save timestamp
+	start := time.Now()
 
 	// save timestamp
 	startTime := time.Now()
@@ -107,7 +115,14 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to run shell command")
-	}
+    }
+    
+    // calculate call duration
+	duration := time.Since(start)
+
+    // add duration to sum
+    s.Statistics.DurationMilliSecondsSum += uint64(math.Max(minimumDurationMilliSeconds, float64(duration.Nanoseconds() / 1000000)))
+	s.Statistics.DurationMilliSecondsCount++
 
 	// calculate call duration
 	callDuration := time.Since(startTime)
@@ -117,7 +132,7 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
 	s.Statistics.DurationMilliSecondsCount++
 
 	s.Logger.DebugWith("Shell executed",
-		"eventID", event.GetID())
+        "eventID", event.GetID())
 
 	return nuclio.Response{
 		StatusCode: http.StatusOK,
