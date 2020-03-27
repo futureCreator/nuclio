@@ -181,7 +181,7 @@ gulp.task('app.js', function () {
             path: config.cache_file,
             transformStreams: [
                 babel({
-                    ignore: ['node_modules/iguazio.dashboard-controls/dist/js/iguazio.dashboard-controls.js']
+                    ignore: ['node_modules/iguazio.dashboard-controls-custom/dist/js/iguazio.dashboard-controls.js']
                 })
             ]
         }));
@@ -247,11 +247,11 @@ gulp.task('images', function () {
 
     return gulp.src(config.app_files.images)
         .pipe(errorHandler(handleError))
-        .pipe(gulpIf(!state.isDevMode, imagemin({
-            optimizationLevel: 3,
-            progressive: true,
-            interlaced: true
-        })))
+        // .pipe(gulpIf(!state.isDevMode, imagemin({
+        //     optimizationLevel: 3,
+        //     progressive: true,
+        //     interlaced: true
+        // })))
         .pipe(gulp.dest(distFolder));
 });
 
