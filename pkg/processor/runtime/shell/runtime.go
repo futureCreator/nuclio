@@ -104,9 +104,6 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
 
 	// add event stuff to env
     cmd.Env = append(cmd.Env, s.getEnvFromEvent(event)...)
-    
-    // save timestamp
-	start := time.Now()
 
 	// save timestamp
 	startTime := time.Now()
@@ -118,17 +115,10 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
     }
     
     // calculate call duration
-	duration := time.Since(start)
-
-    // add duration to sum
-    s.Statistics.DurationMilliSecondsSum += uint64(math.Max(minimumDurationMilliSeconds, float64(duration.Nanoseconds() / 1000000)))
-	s.Statistics.DurationMilliSecondsCount++
-
-	// calculate call duration
 	callDuration := time.Since(startTime)
 
-	// add duration to sum
-	s.Statistics.DurationMilliSecondsSum += uint64(callDuration.Nanoseconds() / 1000000)
+    // add duration to sum
+    s.Statistics.DurationMilliSecondsSum += uint64(math.Max(minimumDurationMilliSeconds, float64(callDuration.Nanoseconds() / 1000000)))
 	s.Statistics.DurationMilliSecondsCount++
 
 	s.Logger.DebugWith("Shell executed",
