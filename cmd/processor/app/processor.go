@@ -21,6 +21,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/loggersink"
 	"github.com/nuclio/nuclio/pkg/platformconfig"
@@ -75,6 +76,7 @@ type Processor struct {
 	metricSinks           []metricsink.MetricSink
 	namedWorkerAllocators map[string]worker.Allocator
 	eventTimeoutWatcher   *timeout.EventTimeoutWatcher
+	startComplete         bool
 	stop                  chan bool
 }
 
@@ -168,7 +170,9 @@ func NewProcessor(configurationPath string, platformConfigurationPath string) (*
 
 // Start starts the processor
 func (p *Processor) Start() error {
-	p.logger.DebugWith("Starting")
+	var err error
+
+	p.logger.DebugWith("Starting triggers", "triggers", p.triggers)
 
 	// iterate over all triggers and start them
 	for _, trigger := range p.triggers {
@@ -181,7 +185,7 @@ func (p *Processor) Start() error {
 	}
 
 	// start the web interface
-	err := p.webAdminServer.Start()
+	err = p.webAdminServer.Start()
 	if err != nil {
 		return errors.Wrap(err, "Failed to start web interface")
 	}
@@ -194,12 +198,10 @@ func (p *Processor) Start() error {
 		}
 	}
 
-	// start the health check server (starting after all the other servers)
-	// this server's successful response means that the processor is healthy and ready
-	err = p.healthCheckServer.Start()
-	if err != nil {
-		return errors.Wrap(err, "Failed to start health check server")
-	}
+	// indicate that we're done starting
+	p.startComplete = true
+
+	p.logger.Debug("Processor started")
 
 	<-p.stop // Wait for stop
 	p.logger.Info("Processor quitting")
@@ -220,7 +222,6 @@ func (p *Processor) GetWorkers() []*worker.Worker {
 
 	// iterate over the processor's triggers
 	for _, trigger := range p.triggers {
-
 		workers = append(workers, trigger.GetWorkers()...)
 	}
 
@@ -232,7 +233,7 @@ func (p *Processor) GetStatus() status.Status {
 	workers := p.GetWorkers()
 
 	// if no workers exist yet, return initializing
-	if len(workers) == 0 {
+	if !p.startComplete {
 		return status.Initializing
 	}
 
@@ -304,10 +305,7 @@ func (p *Processor) createTriggers(processorConfiguration *processor.Configurati
 				p.namedWorkerAllocators)
 
 			if err != nil {
-				p.logger.ErrorWith("Failed to create trigger",
-					"kind", triggerConfiguration.Kind,
-					"err", err.Error())
-				return errors.Wrapf(err, "Failed to create trigger")
+				return errors.Wrapf(err, "Failed to create triggers")
 			}
 
 			// append to triggers (can be nil - ignore unknown triggers)
@@ -367,7 +365,7 @@ func (p *Processor) createDefaultHTTPTrigger(processorConfiguration *processor.C
 		Class:      "sync",
 		Kind:       "http",
 		MaxWorkers: 1,
-		URL:        ":8080",
+		URL:        common.GetEnvOrDefaultString("NUCLIO_DEFAULT_HTTP_TRIGGER_URL", ":8080"),
 	}
 
 	p.logger.DebugWith("Creating default HTTP event source",
@@ -416,6 +414,11 @@ func (p *Processor) createAndStartHealthCheckServer(platformConfiguration *platf
 	server, err := healthcheck.NewServer(p.logger, p, &platformConfiguration.HealthCheck)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create health check server")
+	}
+
+	// start the web interface
+	if err := server.Start(); err != nil {
+		return nil, errors.Wrap(err, "Failed to start health check server")
 	}
 
 	return server, nil

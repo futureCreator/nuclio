@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/nuclio/nuclio/pkg/functionconfig"
@@ -32,7 +33,8 @@ import (
 )
 
 const (
-	MaxWorkersLimit = 100000
+	MaxWorkersLimit                              = 100000
+	DefaultWorkerAvailabilityTimeoutMilliseconds = 10000 // 10 seconds
 )
 
 // Trigger is common trigger interface
@@ -96,6 +98,16 @@ func NewAbstractTrigger(logger logger.Logger,
 	kind string,
 	name string) (AbstractTrigger, error) {
 
+	// enrich default trigger configuration
+	if configuration.WorkerAvailabilityTimeoutMilliseconds == nil || *configuration.WorkerAvailabilityTimeoutMilliseconds < 0 {
+		logger.InfoWith("Setting default worker availability timeout",
+			"DefaultWorkerAvailabilityTimeoutMilliseconds",
+			DefaultWorkerAvailabilityTimeoutMilliseconds)
+
+		defaultWorkerAvailabilityTimeoutMilliseconds := DefaultWorkerAvailabilityTimeoutMilliseconds
+		configuration.WorkerAvailabilityTimeoutMilliseconds = &defaultWorkerAvailabilityTimeoutMilliseconds
+	}
+
 	return AbstractTrigger{
 		Logger:          logger,
 		ID:              configuration.ID,
@@ -157,7 +169,6 @@ func (at *AbstractTrigger) AllocateWorkerAndSubmitEvent(event nuclio.Event,
 func (at *AbstractTrigger) AllocateWorkerAndSubmitEvents(events []nuclio.Event,
 	functionLogger logger.Logger,
 	timeout time.Duration) (responses []interface{}, submitError error, processErrors []error) {
-
 	var workerInstance *worker.Worker
 
 	defer at.HandleSubmitPanic(workerInstance, &submitError)
@@ -268,9 +279,9 @@ func (at *AbstractTrigger) TimeoutWorker(worker *worker.Worker) error {
 // UpdateStatistics updates the trigger statistics
 func (at *AbstractTrigger) UpdateStatistics(success bool) {
 	if success {
-		at.Statistics.EventsHandleSuccessTotal++
+		atomic.AddUint64(&at.Statistics.EventsHandledSuccessTotal, 1)
 	} else {
-		at.Statistics.EventsHandleFailureTotal++
+		atomic.AddUint64(&at.Statistics.EventsHandledFailureTotal, 1)
 	}
 }
 

@@ -111,7 +111,7 @@ func (fr *functionResource) GetByID(request *http.Request, id string) (restful.A
 	}
 
 	if len(function) == 0 {
-		return nil, nuclio.ErrNotFound
+		return nil, nuclio.NewErrNotFound("Function not found")
 	}
 
 	return fr.functionToAttributes(function[0]), nil
@@ -260,7 +260,7 @@ func (fr *functionResource) storeAndDeployFunction(functionInfo *functionInfo, r
 	case <-creationStateUpdatedChan:
 		break
 	case errDeploying := <-errDeployingChan:
-		return errDeploying
+		return errors.RootCause(errDeploying)
 	case <-time.After(creationStateUpdatedTimeout):
 		return nuclio.NewErrInternalServerError("Timed out waiting for creation state to be set")
 	}

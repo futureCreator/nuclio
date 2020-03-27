@@ -105,6 +105,7 @@ func (h *http) Start(checkpoint functionconfig.Checkpoint) error {
 		Handler:        h.requestHandler,
 		Name:           "nuclio",
 		ReadBufferSize: h.configuration.ReadBufferSize,
+		Logger:         NewFastHTTPLogger(h.Logger),
 	}
 
 	// start listening
@@ -212,6 +213,7 @@ func (h *http) AllocateWorkerAndSubmitEvent(ctx *fasthttp.RequestCtx,
 
 func (h *http) requestHandler(ctx *fasthttp.RequestCtx) {
 	if h.status != status.Ready {
+		h.UpdateStatistics(false)
 		ctx.Response.SetStatusCode(net_http.StatusServiceUnavailable)
 		msg := map[string]interface{}{
 			"error":  "Server not ready",
@@ -248,7 +250,7 @@ func (h *http) requestHandler(ctx *fasthttp.RequestCtx) {
 
 	response, timedOut, submitError, processError := h.AllocateWorkerAndSubmitEvent(ctx,
 		functionLogger,
-		time.Duration(h.configuration.WorkerAvailabilityTimeoutMilliseconds)*time.Millisecond)
+		time.Duration(*h.configuration.WorkerAvailabilityTimeoutMilliseconds)*time.Millisecond)
 
 	if timedOut {
 		return
@@ -275,7 +277,7 @@ func (h *http) requestHandler(ctx *fasthttp.RequestCtx) {
 			logContents = logContents[:len(logContents)-1]
 		}
 
-		// write open bracket for JSON
+		// write close bracket for JSON
 		logContents = append(logContents, byte(']'))
 
 		// there's a limit on the amount of logs that can be passed in a header
@@ -306,22 +308,23 @@ func (h *http) requestHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	// if the function returned an error - just return 500
 	if processError != nil {
 		var statusCode int
 
 		// check if the user returned an error with a status code
-		errorWithStatusCode, errorHasStatusCode := processError.(nuclio.ErrorWithStatusCode)
+		switch typedError := processError.(type) {
+		case nuclio.ErrorWithStatusCode:
+			statusCode = typedError.StatusCode()
+		case *nuclio.ErrorWithStatusCode:
+			statusCode = typedError.StatusCode()
+		default:
 
-		// if the user didn't use one of the errors with status code, return internal error
-		// otherwise return the status code the user wanted
-		if !errorHasStatusCode {
+			// if the user didn't use one of the errors with status code, return internal error
 			statusCode = net_http.StatusInternalServerError
-		} else {
-			statusCode = errorWithStatusCode.StatusCode()
 		}
 
 		ctx.Response.SetStatusCode(statusCode)
+		ctx.Response.SetBodyString(processError.Error())
 		return
 	}
 

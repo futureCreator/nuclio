@@ -20,7 +20,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nuclio/nuclio/pkg/common"
@@ -46,7 +48,7 @@ type Platform struct {
 	invoker                        *invoker
 	Config                         interface{}
 	ExternalIPAddresses            []string
-	DeployLogStreams               map[string]*LogStream
+	DeployLogStreams               *sync.Map
 	ContainerBuilder               containerimagebuilderpusher.BuilderPusher
 	DefaultHTTPIngressHostTemplate string
 	ImageNamePrefixTemplate        string
@@ -59,7 +61,7 @@ func NewPlatform(parentLogger logger.Logger, platform platform.Platform, platfor
 		Logger:           parentLogger.GetChild("platform"),
 		platform:         platform,
 		Config:           platformConfiguration,
-		DeployLogStreams: map[string]*LogStream{},
+		DeployLogStreams: &sync.Map{},
 	}
 
 	// create invoker
@@ -207,45 +209,30 @@ func (ap *Platform) EnrichCreateFunctionOptions(createFunctionOptions *platform.
 	return nil
 }
 
+// Enrich functions status with logs
+func (ap *Platform) EnrichFunctionsWithDeployLogStream(functions []platform.Function) {
+
+	// iterate over functions and enrich with deploy logs
+	for _, function := range functions {
+		if deployLogStream, exists := ap.DeployLogStreams.Load(function.GetConfig().Meta.GetUniqueID()); exists {
+			deployLogStream.(*LogStream).ReadLogs(nil, &function.GetStatus().Logs)
+		}
+	}
+}
+
 // Validation and enforcement of required function creation logic
 func (ap *Platform) ValidateCreateFunctionOptions(createFunctionOptions *platform.CreateFunctionOptions) error {
 
-	// validate the project exists
-	getProjectsOptions := &platform.GetProjectsOptions{
-		Meta: platform.ProjectMeta{
-			Name:      createFunctionOptions.FunctionConfig.Meta.Labels["nuclio.io/project-name"],
-			Namespace: createFunctionOptions.FunctionConfig.Meta.Namespace,
-		},
-	}
-	projects, err := ap.platform.GetProjects(getProjectsOptions)
-	if err != nil {
-		return errors.Wrap(err, "Failed getting projects")
-	}
-
-	if len(projects) == 0 {
-		return errors.New("Project doesn't exist")
-	}
-
-	// Verify trigger's MaxWorkers value is making sense, and that there's no more than one http trigger
-	var httpTriggerExists bool
-	for triggerName, _trigger := range createFunctionOptions.FunctionConfig.Spec.Triggers {
-		if _trigger.MaxWorkers > trigger.MaxWorkersLimit {
-			return errors.Errorf("MaxWorkers value for %s trigger (%d) exceeds the limit of %d",
-				triggerName,
-				_trigger.MaxWorkers,
-				trigger.MaxWorkersLimit)
-		}
-		if _trigger.Kind == "http" {
-			if !httpTriggerExists {
-				httpTriggerExists = true
-				continue
-			}
-			return errors.New("There's more than one http trigger (unsupported)")
-		}
+	if err := ap.validateTriggers(createFunctionOptions); err != nil {
+		return errors.Wrap(err, "Triggers validation failed")
 	}
 
 	if err := ap.validateMinMaxReplicas(createFunctionOptions); err != nil {
-		return errors.Wrap(err, "Failed to validate min max replicas")
+		return errors.Wrap(err, "Min max replicas validation failed")
+	}
+
+	if err := ap.validateProjectExists(createFunctionOptions); err != nil {
+		return errors.Wrap(err, "Project existence validation failed")
 	}
 
 	return nil
@@ -390,9 +377,14 @@ func (ap *Platform) TransformOnbuildArtifactPaths(onbuildArtifacts []runtime.Art
 	return ap.ContainerBuilder.TransformOnbuildArtifactPaths(onbuildArtifacts)
 }
 
-// GetBaseImageRegistry returns onbuild base registry
+// GetBaseImageRegistry returns base image registry
 func (ap *Platform) GetBaseImageRegistry(registry string) string {
 	return ap.ContainerBuilder.GetBaseImageRegistry(registry)
+}
+
+// GetOnbuildImageRegistry returns onbuild image registry
+func (ap *Platform) GetOnbuildImageRegistry(registry string) string {
+	return ap.ContainerBuilder.GetOnbuildImageRegistry(registry)
 }
 
 // // GetDefaultRegistryCredentialsSecretName returns secret with credentials to push/pull from docker registry
@@ -432,6 +424,7 @@ func (ap *Platform) functionBuildRequired(createFunctionOptions *platform.Create
 
 func (ap *Platform) GetProcessorLogsAndBriefError(scanner *bufio.Scanner) (string, string) {
 	var formattedProcessorLogs, briefErrorsMessage string
+	var stopWritingRawLinesToBriefErrorsMessage bool
 
 	briefErrorsArray := &[]string{}
 
@@ -442,7 +435,19 @@ func (ap *Platform) GetProcessorLogsAndBriefError(scanner *bufio.Scanner) (strin
 
 			// when it is unstructured just add the log as a text
 			formattedProcessorLogs += rawLogLine + "\n"
-			*briefErrorsArray = append(*briefErrorsArray, rawLogLine)
+
+			// if there's a panic or call stack is printed,
+			// stop appending raw log lines to the briefErrorsMessage (unnecessary information from now on)
+			// this information can still be found in the full log
+			if strings.HasPrefix(rawLogLine, "panic: Wrapper") ||
+				strings.HasPrefix(rawLogLine, "Call stack:") {
+				stopWritingRawLinesToBriefErrorsMessage = true
+			}
+
+			if !stopWritingRawLinesToBriefErrorsMessage {
+				*briefErrorsArray = append(*briefErrorsArray, rawLogLine)
+			}
+
 			continue
 		}
 
@@ -454,29 +459,60 @@ func (ap *Platform) GetProcessorLogsAndBriefError(scanner *bufio.Scanner) (strin
 		formattedProcessorLogs += currentLogLine + "\n"
 	}
 
+	*briefErrorsArray = ap.aggregateConsecutiveDuplicateMessages(*briefErrorsArray)
+
 	// create brief errors log as string, and remove double newlines
 	briefErrorsMessage = strings.Join(*briefErrorsArray, "\n")
 
 	return common.FixEscapeChars(formattedProcessorLogs), common.FixEscapeChars(briefErrorsMessage)
 }
 
+func (ap *Platform) aggregateConsecutiveDuplicateMessages(errorMessagesArray []string) []string {
+	var aggregatedErrorsArray []string
+
+	for i := 0; i < len(errorMessagesArray); i++ {
+		currentErrorMessage := errorMessagesArray[i]
+		consecutiveErrorMessageCount := 1
+
+		// count how many consecutive times current error message reoccurs
+		for i+1 < len(errorMessagesArray) && errorMessagesArray[i+1] == currentErrorMessage {
+			consecutiveErrorMessageCount++
+			i++
+		}
+
+		if consecutiveErrorMessageCount > 1 {
+			aggregatedErrorsArray = append(aggregatedErrorsArray,
+				fmt.Sprintf("[repeated %d times] %s", consecutiveErrorMessageCount, currentErrorMessage))
+			continue
+		}
+
+		aggregatedErrorsArray = append(aggregatedErrorsArray, currentErrorMessage)
+	}
+
+	return aggregatedErrorsArray
+}
+
 // Prettifies log line, and returns - (formattedLogLine, briefLogLine, error)
 // when line shouldn't be added to brief error message - briefLogLine will be an empty string ("")
 func (ap *Platform) prettifyProcessorLogLine(log []byte) (string, string, error) {
+	var workerID, logStructArgs string
+
 	logStruct := struct {
 		Time    *string `json:"time"`
 		Level   *string `json:"level"`
 		Message *string `json:"message"`
+		Name    *string `json:"name,omitempty"`
 		More    *string `json:"more,omitempty"`
 	}{}
 
-	if len(log) > 0 && log[0] == 'l' {
+	if ap.isSDKLogLine(log) {
 
 		// when it is a wrapper log line
 		wrapperLogStruct := struct {
 			Datetime *string           `json:"datetime"`
 			Level    *string           `json:"level"`
 			Message  *string           `json:"message"`
+			Name     *string           `json:"name,omitempty"`
 			With     map[string]string `json:"with,omitempty"`
 		}{}
 
@@ -492,9 +528,14 @@ func (ap *Platform) prettifyProcessorLogLine(log []byte) (string, string, error)
 		logStruct.Time = &unparsedTime
 		logStruct.Level = wrapperLogStruct.Level
 		logStruct.Message = wrapperLogStruct.Message
+		logStruct.Name = wrapperLogStruct.Name
 
-		more := common.CreateKeyValuePairs(wrapperLogStruct.With)
-		logStruct.More = &more
+		if wrapperLogStruct.With != nil {
+			workerID = wrapperLogStruct.With["worker_id"]
+
+			more := common.CreateKeyValuePairs(wrapperLogStruct.With)
+			logStruct.More = &more
+		}
 
 	} else {
 
@@ -516,7 +557,15 @@ func (ap *Platform) prettifyProcessorLogLine(log []byte) (string, string, error)
 
 	logLevel := strings.ToUpper(*logStruct.Level)[0]
 
-	messageAndArgs := ap.getMessageAndArgs(*logStruct.Message, logStruct.More, log)
+	// if worker ID wasn't explicitly given as an arg, try to infer worker ID from logger name
+	if workerID == "" && logStruct.Name != nil {
+		workerID = ap.tryInferWorkerID(*logStruct.Name)
+	}
+
+	if logStruct.More != nil {
+		logStructArgs = *logStruct.More
+	}
+	messageAndArgs := ap.getMessageAndArgs(*logStruct.Message, logStructArgs, log, workerID)
 
 	res := fmt.Sprintf("[%s] (%c) %s",
 		parsedTime.Format("15:04:05.000"),
@@ -524,33 +573,39 @@ func (ap *Platform) prettifyProcessorLogLine(log []byte) (string, string, error)
 		messageAndArgs)
 
 	briefLogLine := ""
-	if ap.shouldAddToBriefErrorsMessage(logLevel, *logStruct.Message) {
+	if ap.shouldAddToBriefErrorsMessage(logLevel, *logStruct.Message, workerID) {
 		briefLogLine = messageAndArgs
 	}
 
 	return res, briefLogLine, nil
 }
 
-func (ap *Platform) getMessageAndArgs(message string, args *string, log []byte) string {
-	var argsAsString, additionalKwargsAsString string
+// get the worker ID from the logger name, for example:
+// "processor.http.w5.python.logger" -> 5
+func (ap *Platform) tryInferWorkerID(loggerName string) string {
+	processorRe := regexp.MustCompile(`^processor\..*\.w[0-9]+\..*`)
+	if processorRe.MatchString(loggerName) {
+		splitName := strings.Split(loggerName, ".")
+		return splitName[2][1:]
+	}
+
+	return ""
+}
+
+func (ap *Platform) getMessageAndArgs(message string, args string, log []byte, workerID string) string {
+	var additionalKwargsAsString string
+
 	additionalKwargs, err := ap.getLogLineAdditionalKwargs(log)
 	if err != nil {
 		ap.Logger.WarnWith("Failed to get log line's additional kwargs",
 			"logLineMessage", message)
 	}
-
-	if args != nil {
-		argsAsString = *args
-	}
-
-	if additionalKwargs != nil {
-		additionalKwargsAsString = common.CreateKeyValuePairs(additionalKwargs)
-	}
+	additionalKwargsAsString = common.CreateKeyValuePairs(additionalKwargs)
 
 	// format result depending on args/additional kwargs existence
 	var messageArgsList []string
-	if argsAsString != "" {
-		messageArgsList = append(messageArgsList, argsAsString)
+	if args != "" {
+		messageArgsList = append(messageArgsList, args)
 	}
 	if additionalKwargsAsString != "" {
 		messageArgsList = append(messageArgsList, additionalKwargsAsString)
@@ -564,14 +619,18 @@ func (ap *Platform) getMessageAndArgs(message string, args *string, log []byte) 
 
 func (ap *Platform) getLogLineAdditionalKwargs(log []byte) (map[string]string, error) {
 	logAsMap := map[string]interface{}{}
-	err := json.Unmarshal(log, &logAsMap)
-	if err != nil {
+
+	if ap.isSDKLogLine(log) {
+		if err := json.Unmarshal(log[1:], &logAsMap); err != nil {
+			return nil, errors.Wrap(err, "Failed to unmarshal log line")
+		}
+	} else if err := json.Unmarshal(log, &logAsMap); err != nil {
 		return nil, errors.Wrap(err, "Failed to unmarshal log line")
 	}
 
 	additionalKwargs := map[string]string{}
 
-	defaultArgs := []string{"time", "datetime", "level", "message", "with", "more"}
+	defaultArgs := []string{"time", "datetime", "level", "message", "with", "more", "name"}
 
 	// validate it is a suitable special arg
 	for argKey, argValue := range logAsMap {
@@ -592,15 +651,35 @@ func (ap *Platform) getLogLineAdditionalKwargs(log []byte) (map[string]string, e
 	return additionalKwargs, nil
 }
 
-func (ap *Platform) shouldAddToBriefErrorsMessage(logLevel uint8, logMessage string) bool {
-	knownFailureSubstrings := [...]string{"Failed to connect to broker"}
+func (ap *Platform) isSDKLogLine(logLine []byte) bool {
+	return len(logLine) > 0 && logLine[0] == 'l'
+}
 
+func (ap *Platform) shouldAddToBriefErrorsMessage(logLevel uint8, logMessage, workerID string) bool {
+	knownFailureSubstrings := [...]string{"Failed to connect to broker"}
+	ignoreFailureSubstrings := [...]string{
+		string(common.UnexpectedTerminationChildProcess),
+		string(common.FailedReadFromConnection),
+	}
+
+	// when the log message contains a failure that should be ignored
+	for _, ignoreFailureSubstring := range ignoreFailureSubstrings {
+		if strings.Contains(logMessage, ignoreFailureSubstring) {
+			return false
+		}
+	}
+
+	// show errors only of the first worker
+	// done to prevent error duplication from several workers
+	if workerID != "" && workerID != "0" {
+		return false
+	}
 	// when log level is warning or above
 	if logLevel != 'D' && logLevel != 'I' {
 		return true
 	}
 
-	// when the log message contains a known failure prefix
+	// when the log message contains a known failure substring
 	for _, knownFailureSubstring := range knownFailureSubstrings {
 		if strings.Contains(logMessage, knownFailureSubstring) {
 			return true
@@ -674,6 +753,51 @@ func (ap *Platform) validateMinMaxReplicas(createFunctionOptions *platform.Creat
 		return errors.New("Max replicas must be greater than zero")
 	}
 
+	return nil
+}
+
+func (ap *Platform) validateProjectExists(createFunctionOptions *platform.CreateFunctionOptions) error {
+
+	// validate the project exists
+	getProjectsOptions := &platform.GetProjectsOptions{
+		Meta: platform.ProjectMeta{
+			Name:      createFunctionOptions.FunctionConfig.Meta.Labels["nuclio.io/project-name"],
+			Namespace: createFunctionOptions.FunctionConfig.Meta.Namespace,
+		},
+	}
+	projects, err := ap.platform.GetProjects(getProjectsOptions)
+	if err != nil {
+		return errors.Wrap(err, "Failed getting projects")
+	}
+
+	if len(projects) == 0 {
+		return errors.New("Project does not exist")
+	}
+	return nil
+}
+
+func (ap *Platform) validateTriggers(createFunctionOptions *platform.CreateFunctionOptions) error {
+
+	var httpTriggerExists bool
+	for triggerName, _trigger := range createFunctionOptions.FunctionConfig.Spec.Triggers {
+
+		// no more workers than limitation allows
+		if _trigger.MaxWorkers > trigger.MaxWorkersLimit {
+			return errors.Errorf("MaxWorkers value for %s trigger (%d) exceeds the limit of %d",
+				triggerName,
+				_trigger.MaxWorkers,
+				trigger.MaxWorkersLimit)
+		}
+
+		// no more than one http trigger is allowed
+		if _trigger.Kind == "http" {
+			if !httpTriggerExists {
+				httpTriggerExists = true
+				continue
+			}
+			return errors.New("There's more than one http trigger (unsupported)")
+		}
+	}
 	return nil
 }
 

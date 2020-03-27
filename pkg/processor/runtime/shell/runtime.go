@@ -108,6 +108,9 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
     // save timestamp
 	start := time.Now()
 
+	// save timestamp
+	startTime := time.Now()
+
 	// run the command
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -119,6 +122,13 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
 
     // add duration to sum
     s.Statistics.DurationMilliSecondsSum += uint64(math.Max(minimumDurationMilliSeconds, float64(duration.Nanoseconds() / 1000000)))
+	s.Statistics.DurationMilliSecondsCount++
+
+	// calculate call duration
+	callDuration := time.Since(startTime)
+
+	// add duration to sum
+	s.Statistics.DurationMilliSecondsSum += uint64(callDuration.Nanoseconds() / 1000000)
 	s.Statistics.DurationMilliSecondsCount++
 
 	s.Logger.DebugWith("Shell executed",

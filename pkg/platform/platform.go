@@ -57,7 +57,7 @@ type Platform interface {
 	// GetFunctions will list existing functions
 	GetFunctions(getFunctionsOptions *GetFunctionsOptions) ([]Function, error)
 
-	// GetDefaultInvokeIPAddresses will return a list of ip addresses to be used by the platform to inovke a function
+	// GetDefaultInvokeIPAddresses will return a list of ip addresses to be used by the platform to invoke a function
 	GetDefaultInvokeIPAddresses() ([]string, error)
 
 	//
@@ -142,7 +142,10 @@ type Platform interface {
 	// Change Onbuild artifact paths depending on the type of the builder used
 	TransformOnbuildArtifactPaths(onbuildArtifacts []runtime.Artifact) (map[string]string, error)
 
-	// GetBaseImageRegistry returns onbuild base registry
+	// GetOnbuildImageRegistry returns onbuild base registry
+	GetOnbuildImageRegistry(registry string) string
+
+	// GetBaseImageRegistry returns base image registry
 	GetBaseImageRegistry(registry string) string
 
 	// GetDefaultRegistryCredentialsSecretName returns secret with credentials to push/pull from docker registry
