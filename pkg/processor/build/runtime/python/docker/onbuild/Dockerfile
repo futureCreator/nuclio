@@ -44,7 +44,7 @@ RUN pip download \
         -r /requirements/python3_6.txt
 
 # Supplies processor
-FROM quay.io/nuclio/processor:${NUCLIO_LABEL}-${NUCLIO_ARCH} as processor
+FROM futurecreator/nuclio-processor:${NUCLIO_LABEL}-${NUCLIO_ARCH} as processor
 
 # Doesn't do anything but hold processor binary and all Python code required to run the handler
 FROM scratch
