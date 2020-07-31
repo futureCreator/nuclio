@@ -80,6 +80,9 @@ COPY --from=build-static /home/nuclio/dashboard/src/dist /etc/nginx/static/
 # copy dashboard binary from build binary stage
 COPY --from=build-binary /dashboard/dashboard /usr/local/bin
 
+# copy dockerconfig
+COPY cmd/dashboard/docker/.dockerconfigjson /etc/nuclio/dashboard/registry-credentials/.dockerconfigjson
+
 # generate a version file
 ARG NUCLIO_VERSION_INFO_FILE_CONTENTS
 RUN mkdir -p /etc/nuclio && echo ${NUCLIO_VERSION_INFO_FILE_CONTENTS} > /etc/nuclio/version_info.json

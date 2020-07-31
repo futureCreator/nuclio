@@ -29,7 +29,8 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
-	"time"
+    "time"
+    "regexp"
 
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/containerimagebuilderpusher"
@@ -271,6 +272,12 @@ func (b *Builder) GetProjectName() string {
 // GetFunctionName returns the name of the function
 func (b *Builder) GetFunctionName() string {
 	return b.options.FunctionConfig.Meta.Name
+}
+
+// GetFunctionNamespace returns the namespace of the function
+
+func (b *Builder) GetFunctionNamespace() string {
+	return b.options.FunctionConfig.Meta.Namespace
 }
 
 // GetFunctionHandler returns the name of the handler
@@ -529,9 +536,9 @@ func (b *Builder) getImage() (string, error) {
 
 		// to keep old behaviour (before image prefix template option added)
 		if imagePrefix == "" {
-			imageName = fmt.Sprintf("%sprocessor-%s", repository, b.GetFunctionName())
+			imageName = fmt.Sprintf("%s%s-%s", repository, b.GetFunctionNamespace(), b.GetFunctionName())
 		} else {
-			imageName = fmt.Sprintf("%s%sprocessor", repository, imagePrefix)
+			imageName = fmt.Sprintf("%s%s%s", repository, imagePrefix, b.GetFunctionNamespace())
 		}
 	} else {
 		imageName = b.options.FunctionConfig.Spec.Build.Image
@@ -692,13 +699,47 @@ func (b *Builder) validateAndParseS3Attributes(attributes map[string]interface{}
 }
 
 func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
-	if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]; ok {
-		functionPath = fmt.Sprintf("%s/archive/%s.zip",
-			strings.TrimRight(functionPath, "/"),
+
+	gitlabMode := os.Getenv("NUCLIO_GITLAB_MODE") == "true"
+	re := regexp.MustCompile("([\\w:])([\\w\\d-.]+)")
+	info := re.FindAllString(functionPath, -1)
+
+	if gitlabMode {
+
+		// gitlab
+		// --header 'PRIVATE-TOKEN: abcde...' 'http://gitlab3.sdsdev.co.kr/gitlab/api/v3/projects/{owner}%2F{repository}/repository/archive.zip?sha={branch_reference}
+
+        branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+        if !ok {
+			return "", errors.New("If code entry type is gitlab, branch sha must be provided")
+		}
+		functionPath = fmt.Sprintf("%s://%s/%s/api/v3/projects/%s%%2F%s/repository/archive.zip?sha=%s",
+			info[0],
+			info[1],
+			info[2],
+			info[3],
+			info[4],
 			branch)
+
 	} else {
-		return "", errors.New("If code entry type is github, branch must be provided")
+
+		// github
+		// https://code.sdsdev.co.kr/api/v3/repos/{owner}/{reponame}/zipball/{branch_name}?access_token={token}
+
+		branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+		if !ok {
+			branch = "master"
+        }
+		functionPath = fmt.Sprintf("%s://%s/api/v3/repos/%s/%s/zipball/%s",
+			info[0],
+			info[1],
+			info[2],
+			info[3],
+			branch)
 	}
+
+	b.logger.DebugWith("GitHub download API", "functionPath", functionPath)
+
 	return functionPath, nil
 }
 
@@ -1552,6 +1593,8 @@ func (b *Builder) downloadFunctionFromURL(tempFile *os.File,
 	codeEntryType string) error {
 	userDefinedHeaders, found := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["headers"]
 	headers := http.Header{}
+	gitlabMode := os.Getenv("NUCLIO_GITLAB_MODE") == "true"
+	token := ""
 
 	if found {
 
@@ -1561,7 +1604,22 @@ func (b *Builder) downloadFunctionFromURL(tempFile *os.File,
 			if !ok {
 				return errors.New("Failed to convert header value to string")
 			}
-			headers.Set(key, stringValue)
+			if codeEntryType == GithubEntryType && key == "Authorization" {
+				token = strings.Split(stringValue, " ")[1]
+			} else {
+				headers.Set(key, stringValue)
+			}
+		}
+    }
+
+	if codeEntryType == GithubEntryType {
+        if token == "" {
+            return errors.New("If codeEntryType is GitHub(GitLab), token must be provided")
+        }
+		if gitlabMode {
+			headers.Set("PRIVATE-TOKEN", token)
+		} else {
+			functionPath = functionPath + fmt.Sprintf("?access_token=%s", token)
 		}
 	}
 

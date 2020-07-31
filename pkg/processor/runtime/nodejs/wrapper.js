@@ -94,7 +94,7 @@ function send_reply(handler_output) {
         duration: Math.max(0.00000000001, (end.getTime() - start.getTime()) / 1000)
     }
     socket.write('m' + JSON.stringify(duration) + '\n');
-    
+
     var response = response_from_output(handler_output);
     socket.write('r' + JSON.stringify(response) + '\n');
 }
