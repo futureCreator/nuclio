@@ -17,7 +17,7 @@ GOPATH ?= $(shell go env GOPATH)
 OS_NAME = $(shell uname)
 
 # upstream repo
-NUCLIO_DOCKER_REPO := quay.io/nuclio
+NUCLIO_DOCKER_REPO := futurecreator
 
 # get default os / arch from go env
 NUCLIO_DEFAULT_OS := $(shell go env GOOS)
@@ -119,17 +119,14 @@ DOCKER_IMAGES_RULES = \
 	processor \
 	autoscaler \
 	dlx \
-	handler-builder-golang-onbuild \
 	handler-builder-java-onbuild \
-	handler-builder-ruby-onbuild \
 	handler-builder-python-onbuild \
-	handler-builder-dotnetcore-onbuild \
 	handler-builder-nodejs-onbuild
 
 docker-images: ensure-gopath $(DOCKER_IMAGES_RULES)
 	@echo Done.
 
-tools: ensure-gopath nuctl
+tools: ensure-gopath
 	@echo Done.
 
 push-docker-images:
@@ -157,16 +154,16 @@ nuctl: ensure-gopath
 	@ln -sF $(GOPATH)/bin/$(NUCTL_BIN_NAME) $(NUCTL_TARGET)
 
 processor: ensure-gopath
-	docker build --file cmd/processor/Dockerfile --tag $(NUCLIO_DOCKER_REPO)/processor:$(NUCLIO_DOCKER_IMAGE_TAG) .
+	docker build --file cmd/processor/Dockerfile --tag $(NUCLIO_DOCKER_REPO)/nuclio-processor:$(NUCLIO_DOCKER_IMAGE_TAG) .
 
-IMAGES_TO_PUSH += $(NUCLIO_DOCKER_REPO)/processor:$(NUCLIO_DOCKER_IMAGE_TAG)
+IMAGES_TO_PUSH += $(NUCLIO_DOCKER_REPO)/nuclio-processor:$(NUCLIO_DOCKER_IMAGE_TAG)
 
 #
 # Dockerized services
 #
 
 # Controller
-NUCLIO_DOCKER_CONTROLLER_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/controller:$(NUCLIO_DOCKER_IMAGE_TAG)
+NUCLIO_DOCKER_CONTROLLER_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/nuclio-controller:$(NUCLIO_DOCKER_IMAGE_TAG)
 
 controller: ensure-gopath
 	docker build \
@@ -178,7 +175,7 @@ controller: ensure-gopath
 IMAGES_TO_PUSH += $(NUCLIO_DOCKER_CONTROLLER_IMAGE_NAME)
 
 # Dashboard
-NUCLIO_DOCKER_DASHBOARD_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/dashboard:$(NUCLIO_DOCKER_IMAGE_TAG)
+NUCLIO_DOCKER_DASHBOARD_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/nuclio-dashboard:$(NUCLIO_DOCKER_IMAGE_TAG)
 
 dashboard: ensure-gopath
 	docker build \
@@ -191,7 +188,7 @@ dashboard: ensure-gopath
 IMAGES_TO_PUSH += $(NUCLIO_DOCKER_DASHBOARD_IMAGE_NAME)
 
 # Scaler
-NUCLIO_DOCKER_SCALER_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/autoscaler:$(NUCLIO_DOCKER_IMAGE_TAG)
+NUCLIO_DOCKER_SCALER_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/nuclio-autoscaler:$(NUCLIO_DOCKER_IMAGE_TAG)
 
 autoscaler: ensure-gopath
 	docker build \
@@ -203,7 +200,7 @@ autoscaler: ensure-gopath
 IMAGES_TO_PUSH += $(NUCLIO_DOCKER_SCALER_IMAGE_NAME)
 
 # Dlx
-NUCLIO_DOCKER_DLX_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/dlx:$(NUCLIO_DOCKER_IMAGE_TAG)
+NUCLIO_DOCKER_DLX_IMAGE_NAME=$(NUCLIO_DOCKER_REPO)/nuclio-dlx:$(NUCLIO_DOCKER_IMAGE_TAG)
 
 dlx: ensure-gopath
 	docker build \
