@@ -8,7 +8,7 @@ module.exports = {
     source_dir: 'src',
 
     /**
-     * iguazio.dashboard-controls-custom folders
+     * iguazio.dashboard-controls folders
      */
     shared_files: {
         dist: 'node_modules/iguazio.dashboard-controls-custom/dist',
