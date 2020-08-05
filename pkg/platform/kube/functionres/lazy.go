@@ -1752,16 +1752,32 @@ func (lc *lazyClient) populateDeploymentContainer(functionLabels labels.Set,
 	healthCheckHTTPPort := 8082
 
 	container.Image = function.Spec.Image
-	container.Resources = function.Spec.Resources
-	if container.Resources.Requests == nil {
-		container.Resources.Requests = make(v1.ResourceList)
+    container.Resources = function.Spec.Resources
+    
+    // set default resource
+    if container.Resources.Requests == nil {
+        container.Resources.Requests = make(v1.ResourceList)
+        cpuReqQuantity, err := apiresource.ParseQuantity("25m")
+        if err == nil {
+            container.Resources.Requests["cpu"] = cpuReqQuantity
+        }
+        memReqQuantity, err := apiresource.ParseQuantity("128Mi")
+        if err == nil {
+            container.Resources.Requests["memory"] = memReqQuantity
+        }
+    }
+    if container.Resources.Limits == nil {
+        container.Resources.Limits = make(v1.ResourceList)
+        cpuLimQuantity, err := apiresource.ParseQuantity("500m")
+        if err == nil {
+            container.Resources.Limits["cpu"] = cpuLimQuantity
+        }
+        memLimQuantity, err := apiresource.ParseQuantity("1Gi")
+        if err == nil {
+            container.Resources.Limits["memory"] = memLimQuantity
+        }
+    }
 
-		// the default is 500 milli cpu
-		cpuQuantity, err := apiresource.ParseQuantity("25m") // nolint: errcheck
-		if err == nil {
-			container.Resources.Requests["cpu"] = cpuQuantity
-		}
-	}
 	container.Env = lc.getFunctionEnvironment(functionLabels, function)
 	container.Ports = []v1.ContainerPort{
 		{
