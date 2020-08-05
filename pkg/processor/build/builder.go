@@ -718,6 +718,30 @@ func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, err
 	return functionPath, nil
 }
 
+
+func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
+ 
+    re := regexp.MustCompile("([\\w:])([\\w\\d-.]+)")
+    info := re.FindAllString(functionPath, -1)
+
+    // github
+    // https://code.sdsdev.co.kr/api/v3/repos/{owner}/{reponame}/zipball/{branch_name}?access_token={token}
+    if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+    if !ok {
+        branch := "master"
+    }
+    functionPath = fmt.Sprintf("%s://%s/api/v3/repos/%s/%s/zipball/%s",
+        info[0],
+        info[1],
+        info[2],
+        info[3],
+        branch)
+  
+    b.logger.DebugWith("GitHub download API", "functionPath", functionPath)
+ 
+    return functionPath, nil
+}
+
 func (b *Builder) decompressFunctionArchive(functionPath string) (string, error) {
 
 	// create a staging directory
