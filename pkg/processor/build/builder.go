@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -58,17 +58,17 @@ import (
 
 const (
 	FunctionConfigFileName = "function.yaml"
-	uhttpcImage            = "quay.io/nuclio/uhttpc:0.0.1-amd64"
-	GithubEntryType        = "github"
-	ArchiveEntryType       = "archive"
-	S3EntryType            = "s3"
-	ImageEntryType         = "image"
-	SourceCodeEntryType    = "sourceCode"
+	uhttpcImage			= "quay.io/nuclio/uhttpc:0.0.1-amd64"
+	GithubEntryType		= "github"
+	ArchiveEntryType	   = "archive"
+	S3EntryType			= "s3"
+	ImageEntryType		 = "image"
+	SourceCodeEntryType	= "sourceCode"
 )
 
 // holds parameters for things that are required before a runtime can be initialized
 type runtimeInfo struct {
-	extension    string
+	extension	string
 	inlineParser inlineparser.ConfigParser
 
 	// used to prioritize runtimes, like when there is more than one runtime matching a given criteria (e.g.
@@ -124,9 +124,9 @@ type Builder struct {
 // NewBuilder returns a new builder
 func NewBuilder(parentLogger logger.Logger, platform platform.Platform, s3Client common.S3Client) (*Builder, error) {
 	newBuilder := &Builder{
-		logger:      parentLogger,
-		platform:    platform,
-		s3Client:    s3Client,
+		logger:	  parentLogger,
+		platform:	platform,
+		s3Client:	s3Client,
 		versionInfo: version.Get(),
 	}
 
@@ -255,7 +255,7 @@ func (b *Builder) Build(options *platform.CreateFunctionBuildOptions) (*platform
 	}
 
 	buildResult := &platform.CreateFunctionBuildResult{
-		Image:                 processorImage,
+		Image:				 processorImage,
 		UpdatedFunctionConfig: enrichedConfiguration,
 	}
 
@@ -377,11 +377,11 @@ CMD [ "processor" ]
 
 	var dockerfileTemplateBuffer bytes.Buffer
 	err = dockerfileTemplate.Execute(&dockerfileTemplateBuffer, &map[string]interface{}{
-		"BaseImage":            baseImage,
-		"OnbuildStages":        onbuildStages,
+		"BaseImage":			baseImage,
+		"OnbuildStages":		onbuildStages,
 		"OnbuildArtifactPaths": onbuildArtifactPaths,
 		"ImageArtifactPaths":   imageArtifactPaths,
-		"PreCopyDirectives":    directives["preCopy"],
+		"PreCopyDirectives":	directives["preCopy"],
 		"PostCopyDirectives":   directives["postCopy"],
 		"HealthcheckRequired":  healthCheckRequired,
 	})
@@ -721,25 +721,25 @@ func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, err
 
 func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
  
-    re := regexp.MustCompile("([\\w:])([\\w\\d-.]+)")
-    info := re.FindAllString(functionPath, -1)
+	re := regexp.MustCompile("([\\w:])([\\w\\d-.]+)")
+	info := re.FindAllString(functionPath, -1)
 
-    // github
-    // https://code.sdsdev.co.kr/api/v3/repos/{owner}/{reponame}/zipball/{branch_name}?access_token={token}
-    if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
-    if !ok {
-        branch := "master"
-    }
-    functionPath = fmt.Sprintf("%s://%s/api/v3/repos/%s/%s/zipball/%s",
-        info[0],
-        info[1],
-        info[2],
-        info[3],
-        branch)
+	// github
+	// https://code.sdsdev.co.kr/api/v3/repos/{owner}/{reponame}/zipball/{branch_name}?access_token={token}
+	if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+	if !ok {
+		branch := "master"
+	}
+	functionPath = fmt.Sprintf("%s://%s/api/v3/repos/%s/%s/zipball/%s",
+		info[0],
+		info[1],
+		info[2],
+		info[3],
+		branch)
   
-    b.logger.DebugWith("GitHub download API", "functionPath", functionPath)
+	b.logger.DebugWith("GitHub download API", "functionPath", functionPath)
  
-    return functionPath, nil
+	return functionPath, nil
 }
 
 func (b *Builder) decompressFunctionArchive(functionPath string) (string, error) {
@@ -1048,16 +1048,16 @@ func (b *Builder) buildProcessorImage() (string, error) {
 	b.logger.InfoWith("Building processor image", "imageName", imageName)
 
 	err = b.platform.BuildAndPushContainerImage(&containerimagebuilderpusher.BuildOptions{
-		ContextDir:          b.stagingDir,
-		Image:               imageName,
-		TempDir:             b.tempDir,
-		DockerfileInfo:      processorDockerfileInfo,
-		NoCache:             b.options.FunctionConfig.Spec.Build.NoCache,
-		NoBaseImagePull:     b.GetNoBaseImagePull(),
-		BuildArgs:           buildArgs,
-		RegistryURL:         b.options.FunctionConfig.Spec.Build.Registry,
-		SecretName:          b.options.FunctionConfig.Spec.ImagePullSecrets,
-		OutputImageFile:     b.options.OutputImageFile,
+		ContextDir:		  b.stagingDir,
+		Image:			   imageName,
+		TempDir:			 b.tempDir,
+		DockerfileInfo:	  processorDockerfileInfo,
+		NoCache:			 b.options.FunctionConfig.Spec.Build.NoCache,
+		NoBaseImagePull:	 b.GetNoBaseImagePull(),
+		BuildArgs:		   buildArgs,
+		RegistryURL:		 b.options.FunctionConfig.Spec.Build.Registry,
+		SecretName:		  b.options.FunctionConfig.Spec.ImagePullSecrets,
+		OutputImageFile:	 b.options.OutputImageFile,
 		BuildTimeoutSeconds: b.resolveBuildTimeoutSeconds(),
 	})
 
@@ -1249,7 +1249,7 @@ func (b *Builder) resolveProcessorDockerfileInfo(baseImageRegistry string,
 	processorDockerfileInfo := runtime.ProcessorDockerfileInfo{
 		OnbuildArtifacts:   runtimeProcessorDockerfileInfo.OnbuildArtifacts,
 		ImageArtifactPaths: runtimeProcessorDockerfileInfo.ImageArtifactPaths,
-		Directives:         runtimeProcessorDockerfileInfo.Directives,
+		Directives:		 runtimeProcessorDockerfileInfo.Directives,
 	}
 
 	// set the base image
@@ -1279,8 +1279,8 @@ func (b *Builder) resolveProcessorDockerfileInfo(baseImageRegistry string,
 	// if the platform requires an internal healthcheck client - add health check artifact
 	if b.platform.GetHealthCheckMode() == platform.HealthCheckModeInternalClient {
 		artifact := runtime.Artifact{
-			Name:          "uhttpc",
-			Image:         uhttpcImage,
+			Name:		  "uhttpc",
+			Image:		 uhttpcImage,
 			ExternalImage: true,
 			Paths: map[string]string{
 				"/home/nuclio/bin/uhttpc": "/usr/local/bin/uhttpc",
