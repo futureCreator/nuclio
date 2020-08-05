@@ -30,6 +30,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"regexp"
 
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/containerimagebuilderpusher"
@@ -708,15 +709,15 @@ func (b *Builder) validateAndParseS3Attributes(attributes map[string]interface{}
 }
 
 func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
- 
+
 	re := regexp.MustCompile("([\\w:])([\\w\\d-.]+)")
 	info := re.FindAllString(functionPath, -1)
 
 	// github
 	// https://code.sdsdev.co.kr/api/v3/repos/{owner}/{reponame}/zipball/{branch_name}?access_token={token}
-	if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
+	branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]
 	if !ok {
-		branch := "master"
+		branch = "master"
 	}
 	functionPath = fmt.Sprintf("%s://%s/api/v3/repos/%s/%s/zipball/%s",
 		info[0],
@@ -724,12 +725,11 @@ func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, err
 		info[2],
 		info[3],
 		branch)
-  
+
 	b.logger.DebugWith("GitHub download API", "functionPath", functionPath)
- 
+
 	return functionPath, nil
 }
-
 func (b *Builder) decompressFunctionArchive(functionPath string) (string, error) {
 
 	// create a staging directory
