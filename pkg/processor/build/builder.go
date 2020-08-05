@@ -708,18 +708,6 @@ func (b *Builder) validateAndParseS3Attributes(attributes map[string]interface{}
 }
 
 func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
-	if branch, ok := b.options.FunctionConfig.Spec.Build.CodeEntryAttributes["branch"]; ok {
-		functionPath = fmt.Sprintf("%s/archive/%s.zip",
-			strings.TrimRight(functionPath, "/"),
-			branch)
-	} else {
-		return "", errors.New("If code entry type is github, branch must be provided")
-	}
-	return functionPath, nil
-}
-
-
-func (b *Builder) getFunctionPathFromGithubURL(functionPath string) (string, error) {
  
 	re := regexp.MustCompile("([\\w:])([\\w\\d-.]+)")
 	info := re.FindAllString(functionPath, -1)
