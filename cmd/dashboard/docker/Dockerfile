@@ -77,4 +77,7 @@ COPY --from=build-static /home/nuclio/dashboard/src/dist /etc/nginx/static/
 # copy dashboard binary from build binary stage
 COPY --from=build-binary /nuclio/dashboard /usr/local/bin
 
+# copy dockerconfig
+COPY cmd/dashboard/docker/.dockerconfigjson /etc/nuclio/dashboard/registry-credentials/.dockerconfigjson
+
 CMD ["sh",  "-c", "./runner.sh"]
