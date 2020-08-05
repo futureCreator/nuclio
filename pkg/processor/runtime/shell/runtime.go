@@ -25,7 +25,7 @@ import (
 	"path"
 	"strings"
 	"time"
-
+	"math"
 	"github.com/nuclio/nuclio/pkg/common"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/processor/runtime"
@@ -34,6 +34,10 @@ import (
 	"github.com/nuclio/errors"
 	"github.com/nuclio/logger"
 	"github.com/nuclio/nuclio-sdk-go"
+)
+
+const (
+	minimumDurationMilliSeconds float64 = 100.0
 )
 
 type shell struct {
@@ -113,7 +117,8 @@ func (s *shell) ProcessEvent(event nuclio.Event, functionLogger logger.Logger) (
 	callDuration := time.Since(startTime)
 
 	// add duration to sum
-	s.Statistics.DurationMilliSecondsSum += uint64(callDuration.Nanoseconds() / 1000000)
+	//s.Statistics.DurationMilliSecondsSum += uint64(callDuration.Nanoseconds() / 1000000)
+	s.Statistics.DurationMilliSecondsSum += uint64(math.Max(minimumDurationMilliSeconds, float64(duration.Nanoseconds() / 1000000)))
 	s.Statistics.DurationMilliSecondsCount++
 
 	s.Logger.DebugWith("Shell executed",
