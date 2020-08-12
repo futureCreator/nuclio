@@ -55,9 +55,16 @@ func (fr *functionResource) GetAll(request *http.Request) (map[string]restful.At
 		return nil, nuclio.NewErrBadRequest("Namespace must exist")
 	}
 
+	// check auth
+	authConfig, err := fr.getRequestAuthConfig(request)
+	if err != nil {
+		return nil, err
+	}
+
 	getFunctionsOptions := &platform.GetFunctionsOptions{
 		Name:      request.Header.Get("x-nuclio-function-name"),
 		Namespace: fr.getNamespaceFromRequest(request),
+		AuthConfig: authConfig,
 	}
 
 	// if the user wants to filter by project, do that
@@ -95,9 +102,16 @@ func (fr *functionResource) GetByID(request *http.Request, id string) (restful.A
 		return nil, nuclio.NewErrBadRequest("Namespace must exist")
 	}
 
+	// check auth
+	authConfig, err := fr.getRequestAuthConfig(request)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get functions")
+	}
+
 	functions, err := fr.getPlatform().GetFunctions(&platform.GetFunctionsOptions{
 		Namespace: fr.getNamespaceFromRequest(request),
 		Name:      id,
+		AuthConfig: authConfig,
 	})
 
 	if err != nil {
@@ -390,7 +404,11 @@ func (fr *functionResource) getFunctionInfoFromRequest(request *http.Request) (*
 		return nil, nuclio.WrapErrBadRequest(errors.Wrap(err, "Failed to parse JSON body"))
 	}
 
-	return fr.processFunctionInfo(&functionInfoInstance, request.Header.Get("x-nuclio-project-name"))
+	if functionInfoInstance.Meta != nil {
+		functionInfoInstance.Meta.Namespace = fr.getNamespaceOrDefault(request.Header.Get("x-nuclio-function-namespace"))
+	}
+
+	return fr.processFunctionInfo(&functionInfoInstance, request.Header.Get("x-nuclio-project-name"), request.Header.Get("x-nuclio-function-namespace"))
 }
 
 func (fr *functionResource) resolveNamespace(request *http.Request, function *functionInfo) string {
@@ -413,10 +431,11 @@ func (fr *functionResource) validateUpdateInfo(functionInfo *functionInfo, funct
 	return nil
 }
 
-func (fr *functionResource) processFunctionInfo(functionInfoInstance *functionInfo, projectName string) (*functionInfo, error) {
+func (fr *functionResource) processFunctionInfo(functionInfoInstance *functionInfo, projectName string, functionNamespace string) (*functionInfo, error) {
+	
 	// override namespace if applicable
 	if functionInfoInstance.Meta != nil {
-		functionInfoInstance.Meta.Namespace = fr.getNamespaceOrDefault(functionInfoInstance.Meta.Namespace)
+		functionInfoInstance.Meta.Namespace = fr.getNamespaceOrDefault(functionNamespace)
 	}
 
 	// meta must exist

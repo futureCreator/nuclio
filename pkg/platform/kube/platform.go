@@ -382,10 +382,17 @@ func (p *Platform) GetNodes() ([]platform.Node, error) {
 
 // CreateProject will probably create a new project
 func (p *Platform) CreateProject(createProjectOptions *platform.CreateProjectOptions) error {
+	
+	// check auth
+	client, err := p.consumer.getNuclioClientSet(createProjectOptions.AuthConfig)
+	if err != nil {
+		return errors.Wrap(err, "Failed to get Nuclio Client")
+	}
+
 	newProject := nuclioio.NuclioProject{}
 	p.platformProjectToProject(&createProjectOptions.ProjectConfig, &newProject)
 
-	_, err := p.consumer.nuclioClientSet.NuclioV1beta1().
+	_, err = client.NuclioV1beta1().
 		NuclioProjects(createProjectOptions.ProjectConfig.Meta.Namespace).
 		Create(&newProject)
 
@@ -398,7 +405,14 @@ func (p *Platform) CreateProject(createProjectOptions *platform.CreateProjectOpt
 
 // UpdateProject will update a previously existing project
 func (p *Platform) UpdateProject(updateProjectOptions *platform.UpdateProjectOptions) error {
-	project, err := p.consumer.nuclioClientSet.NuclioV1beta1().
+	
+	// check auth
+	client, err := p.consumer.getNuclioClientSet(updateProjectOptions.AuthConfig)
+	if err != nil {
+		return errors.Wrap(err, "Failed to get Nuclio Client")
+	}
+	
+	project, err := client.NuclioV1beta1().
 		NuclioProjects(updateProjectOptions.ProjectConfig.Meta.Namespace).
 		Get(updateProjectOptions.ProjectConfig.Meta.Name, metav1.GetOptions{})
 	if err != nil {
@@ -409,7 +423,7 @@ func (p *Platform) UpdateProject(updateProjectOptions *platform.UpdateProjectOpt
 	p.platformProjectToProject(&updateProjectOptions.ProjectConfig, &updatedProject)
 	project.Spec = updatedProject.Spec
 
-	_, err = p.consumer.nuclioClientSet.NuclioV1beta1().
+	_, err = client.NuclioV1beta1().
 		NuclioProjects(updateProjectOptions.ProjectConfig.Meta.Namespace).
 		Update(project)
 
@@ -422,11 +436,18 @@ func (p *Platform) UpdateProject(updateProjectOptions *platform.UpdateProjectOpt
 
 // DeleteProject will delete a previously existing project
 func (p *Platform) DeleteProject(deleteProjectOptions *platform.DeleteProjectOptions) error {
+
+	// check auth
+	client, err := p.consumer.getNuclioClientSet(deleteProjectOptions.AuthConfig)
+	if err != nil {
+		return errors.Wrap(err, "Failed to get Nuclio Client")
+	}
+
 	if err := p.Platform.ValidateDeleteProjectOptions(deleteProjectOptions); err != nil {
 		return err
 	}
 
-	if err := p.consumer.nuclioClientSet.NuclioV1beta1().
+	if err := client.NuclioV1beta1().
 		NuclioProjects(deleteProjectOptions.Meta.Namespace).
 		Delete(deleteProjectOptions.Meta.Name, &metav1.DeleteOptions{}); err != nil {
 		return errors.Wrapf(err,
@@ -443,11 +464,17 @@ func (p *Platform) GetProjects(getProjectsOptions *platform.GetProjectsOptions) 
 	var platformProjects []platform.Project
 	var projects []nuclioio.NuclioProject
 
+	// check auth
+	client, err := p.consumer.getNuclioClientSet(getProjectsOptions.AuthConfig)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to get Nuclio Client")
+	}
+
 	// if identifier specified, we need to get a single NuclioProject
 	if getProjectsOptions.Meta.Name != "" {
 
 		// get specific NuclioProject CR
-		Project, err := p.consumer.nuclioClientSet.NuclioV1beta1().
+		Project, err := client.NuclioV1beta1().
 			NuclioProjects(getProjectsOptions.Meta.Namespace).
 			Get(getProjectsOptions.Meta.Name, metav1.GetOptions{})
 
@@ -465,7 +492,7 @@ func (p *Platform) GetProjects(getProjectsOptions *platform.GetProjectsOptions) 
 
 	} else {
 
-		projectInstanceList, err := p.consumer.nuclioClientSet.NuclioV1beta1().
+		projectInstanceList, err := client.NuclioV1beta1().
 			NuclioProjects(getProjectsOptions.Meta.Namespace).
 			List(metav1.ListOptions{LabelSelector: ""})
 
