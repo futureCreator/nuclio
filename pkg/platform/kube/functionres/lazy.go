@@ -169,9 +169,13 @@ func (lc *lazyClient) CreateOrUpdate(ctx context.Context, function *nuclioio.Nuc
 	functionLabels["nuclio.io/function-name"] = function.Name
 
 	// TODO: remove when versioning is back in
-	function.Spec.Version = -1
-	function.Spec.Alias = "latest"
-	functionLabels["nuclio.io/function-version"] = "latest"
+	// function.Spec.Version = -1
+	// function.Spec.Alias = "latest"
+	if function.Spec.Version == -1 {
+		functionLabels["nuclio.io/function-version"] = "latest"
+	} else {
+		functionLabels["nuclio.io/function-version"] = strconv.Itoa(function.Spec.Version)
+	}
 
 	resources := lazyResources{}
 

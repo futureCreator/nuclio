@@ -279,9 +279,16 @@ func (b *Builder) GetProjectName() string {
 func (b *Builder) GetFunctionName() string {
 	return b.options.FunctionConfig.Meta.Name
 }
-
 func (b *Builder) GetFunctionNamespace() string {
 	return b.options.FunctionConfig.Meta.Namespace
+}
+
+func (b *Builder) GetFunctionVersion() int {
+	return b.options.FunctionConfig.Spec.Version
+}
+
+func (b *Builder) GetFunctionAlias() string {
+	return b.options.FunctionConfig.Spec.Alias
 }
 
 // GetFunctionHandler returns the name of the handler
@@ -550,9 +557,9 @@ func (b *Builder) getImage() (string, error) {
 
 		// to keep old behaviour (before image prefix template option added)
 		if imagePrefix == "" {
-			imageName = fmt.Sprintf("%s%s-%s", repository, b.GetFunctionNamespace(), b.GetFunctionName())
+			imageName = fmt.Sprintf("%s%s-%s:%s", repository, b.GetFunctionNamespace(), b.GetFunctionName(), strconv.Itoa(b.GetFunctionVersion()))
 		} else {
-			imageName = fmt.Sprintf("%s%s%s", repository, imagePrefix, b.GetFunctionNamespace())
+			imageName = fmt.Sprintf("%s%s%s:%s", repository, imagePrefix, b.GetFunctionNamespace(), strconv.Itoa(b.GetFunctionVersion()))
 		}
 	} else {
 		imageName = b.options.FunctionConfig.Spec.Build.Image
