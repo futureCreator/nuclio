@@ -28,6 +28,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"strconv"
 	"text/template"
 	"time"
 	"regexp"
@@ -517,6 +518,8 @@ func (b *Builder) validateAndEnrichConfiguration() error {
 	splitProcessorImageName := strings.Split(b.processorImage.imageName, ":")
 	if len(splitProcessorImageName) == 2 {
 		b.processorImage.imageTag = splitProcessorImageName[1]
+	} else {
+		b.processorImage.imageTag = strconv.Itoa(b.GetFunctionVersion())
 	}
 
 	// if tag isn't set - set latest
@@ -557,9 +560,9 @@ func (b *Builder) getImage() (string, error) {
 
 		// to keep old behaviour (before image prefix template option added)
 		if imagePrefix == "" {
-			imageName = fmt.Sprintf("%s%s-%s:%s", repository, b.GetFunctionNamespace(), b.GetFunctionName(), strconv.Itoa(b.GetFunctionVersion()))
+			imageName = fmt.Sprintf("%s%s-%s", repository, b.GetFunctionNamespace(), b.GetFunctionName())
 		} else {
-			imageName = fmt.Sprintf("%s%s%s:%s", repository, imagePrefix, b.GetFunctionNamespace(), strconv.Itoa(b.GetFunctionVersion()))
+			imageName = fmt.Sprintf("%s%s%s", repository, imagePrefix, b.GetFunctionNamespace())
 		}
 	} else {
 		imageName = b.options.FunctionConfig.Spec.Build.Image
