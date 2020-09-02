@@ -168,14 +168,11 @@ func (lc *lazyClient) CreateOrUpdate(ctx context.Context, function *nuclioio.Nuc
 	// set a few constants
 	functionLabels["nuclio.io/function-name"] = function.Name
 
-	// TODO: remove when versioning is back in
-	// function.Spec.Version = -1
-	// function.Spec.Alias = "latest"
-	if function.Spec.Version == -1 {
-		functionLabels["nuclio.io/function-version"] = "latest"
-	} else {
-		functionLabels["nuclio.io/function-version"] = strconv.Itoa(function.Spec.Version)
-	}
+	// if function.Spec.Version == -1 {
+	// 	functionLabels["nuclio.io/function-version"] = "latest"
+	// } else {
+	// 	functionLabels["nuclio.io/function-version"] = strconv.Itoa(function.Spec.Version)
+	// }
 
 	resources := lazyResources{}
 
@@ -1108,7 +1105,7 @@ func (lc *lazyClient) createOrUpdateIngress(functionLabels labels.Set,
 				deleteOptions := &metav1.DeleteOptions{
 					PropagationPolicy: &propogationPolicy,
 				}
-
+				
 				err := lc.kubeClientSet.ExtensionsV1beta1().
 					Ingresses(function.Namespace).
 					Delete(kube.IngressNameFromFunctionName(function.Name), deleteOptions)

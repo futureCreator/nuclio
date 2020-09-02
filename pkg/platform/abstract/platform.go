@@ -218,6 +218,11 @@ func (ap *Platform) EnrichCreateFunctionOptions(createFunctionOptions *platform.
 		createFunctionOptions.FunctionConfig.Spec.Runtime = "python:3.6"
 	}
 
+	// versioning
+	if createFunctionOptions.FunctionConfig.Spec.Build.CodeEntryType == build.SourceCodeEntryType {
+		createFunctionOptions.FunctionConfig.Spec.Version++
+	}
+
 	return nil
 }
 
