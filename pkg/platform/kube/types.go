@@ -26,11 +26,11 @@ type DeployOptions struct {
 }
 
 func DeploymentNameFromFunctionName(functionName string) string {
-	return fmt.Sprintf("nuclio-%s", functionName)
+	return fmt.Sprintf("sds-functions-%s", functionName)
 }
 
 func PodNameFromFunctionName(functionName string) string {
-	return fmt.Sprintf("nuclio-%s", functionName)
+	return fmt.Sprintf("sds-functions-%s", functionName)
 }
 
 func ConfigMapNameFromFunctionName(functionName string) string {
